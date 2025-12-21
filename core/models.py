@@ -4,7 +4,7 @@ from django.contrib.auth.hashers import make_password, check_password
 
 class Tone(models.Model):
     name = models.CharField(max_length=50)
-    icon_url = models.URLField(blank=True, null=True)
+    details = models.CharField(max_length=255, blank=True, null=True) 
     is_active = models.BooleanField(default=True)
 
     def __str__(self):
@@ -12,8 +12,7 @@ class Tone(models.Model):
 
 class Persona(models.Model):
     name = models.CharField(max_length=50)
-    description = models.TextField()
-    icon_url = models.URLField(blank=True, null=True)
+    description = models.CharField(max_length=255, blank=True, null=True) 
     is_active = models.BooleanField(default=True)
 
     def __str__(self):
