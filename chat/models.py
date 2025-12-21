@@ -4,16 +4,10 @@ from django.conf import settings
 from core.models import TargetProfile
 
 class ChatSession(models.Model):
-    TYPE_CHOICES = (
-        ('general', 'General Chatbot'),
-        ('target', 'Target Specific Chat'),
-    )
-
     conversation_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='chat_sessions')
-    chat_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default='general')
-    target_profile = models.ForeignKey(TargetProfile, on_delete=models.SET_NULL, null=True, blank=True, related_name='sessions')
-    title = models.CharField(max_length=100, blank=True)
+    target_profile = models.ForeignKey(TargetProfile, on_delete=models.SET_NULL, null=True, blank=True)
+    title = models.CharField(max_length=255, default="New Chat")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -27,5 +21,7 @@ class Message(models.Model):
     text = models.TextField(blank=True, null=True)
     image = models.ImageField(upload_to='chat_uploads/', null=True, blank=True)
     ocr_extracted_text = models.TextField(blank=True, null=True)
-    analysis_tags = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created_at']

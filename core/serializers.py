@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from django.contrib.auth.hashers import make_password
 from .models import Tone, Persona, UserSettings, TargetProfile
 
 class ToneSerializer(serializers.ModelSerializer):
@@ -12,9 +13,9 @@ class PersonaSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'description', 'icon_url']
 
 class UserSettingsSerializer(serializers.ModelSerializer):
-    selected_tones_details = ToneSerializer(source='selected_tones', many=True, read_only=True)
-    selected_tones_ids = serializers.PrimaryKeyRelatedField(
-        queryset=Tone.objects.all(), many=True, source='selected_tones', write_only=True
+    selected_tones_details = ToneSerializer(source='active_tones', many=True, read_only=True)
+    active_tones_ids = serializers.PrimaryKeyRelatedField(
+        queryset=Tone.objects.all(), many=True, source='active_tones', write_only=True
     )
     
     active_persona_details = PersonaSerializer(source='active_persona', read_only=True)
@@ -25,15 +26,18 @@ class UserSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserSettings
         fields = [
-            'language', 
-            'gold_theme', 'premium_logo', 'wingman_persona_active',
-            'hide_notifications', 'passcode_lock_enabled', 'passcode',
-            'selected_tones_details', 'selected_tones_ids',
+            'gold_theme', 'premium_logo', 'passcode_lock_enabled', 'passcode',
+            'selected_tones_details', 'active_tones_ids',
             'active_persona_details', 'active_persona_id'
         ]
         extra_kwargs = {
-            'passcode': {'write_only': False},
+            'passcode': {'write_only': True},
         }
+
+    def update(self, instance, validated_data):
+        if 'passcode' in validated_data:
+            validated_data['passcode'] = make_password(validated_data['passcode'])
+        return super().update(instance, validated_data)
 
 class TargetProfileSerializer(serializers.ModelSerializer):
     class Meta:

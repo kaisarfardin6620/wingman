@@ -21,3 +21,5 @@ media
 staticfiles
 celerybeat-schedule
 dump.rdb
+celerybeat-schedule-wal
+celerybeat-schedule-shm

@@ -1,8 +1,10 @@
-from django.urls import path
-from .views import CreateSessionView, ChatHistoryView, ImageUploadView
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from .views import ChatSessionViewSet
+
+router = DefaultRouter()
+router.register(r'sessions', ChatSessionViewSet, basename='chat-sessions')
 
 urlpatterns = [
-    path('session/create/', CreateSessionView.as_view(), name='create-session'),
-    path('session/<int:session_id>/history/', ChatHistoryView.as_view(), name='chat-history'),
-    path('session/<int:session_id>/upload/', ImageUploadView.as_view(), name='image-upload'),
+    path('', include(router.urls)),
 ]
