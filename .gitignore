@@ -20,3 +20,4 @@ postman.json
 media
 staticfiles
 celerybeat-schedule
+dump.rdb
