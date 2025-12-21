@@ -6,23 +6,19 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.token_blacklist.models import OutstandingToken, BlacklistedToken
 from rest_framework.throttling import AnonRateThrottle
 from django.utils.translation import gettext_lazy as _
 from django.db import transaction
-
+from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
+from allauth.socialaccount.providers.oauth2.client import OAuth2Client
+from allauth.socialaccount.providers.apple.views import AppleOAuth2Adapter
+from allauth.socialaccount.providers.apple.client import AppleOAuth2Client
 from .serializers import *
 from .models import User
 from .utils import send_otp_via_email, verify_otp_via_email
 
 logger = logging.getLogger(__name__)
-
-try:
-    from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
-    from allauth.socialaccount.providers.oauth2.client import OAuth2Client
-    from allauth.socialaccount.providers.apple.views import AppleOAuth2Adapter
-    from allauth.socialaccount.providers.apple.client import AppleOAuth2Client
-except ImportError:
-    pass
 
 class RegisterView(APIView):
     throttle_classes = [AnonRateThrottle]
@@ -55,8 +51,8 @@ class VerifyOTPView(APIView):
     def post(self, request):
         serializer = VerifyOTPSerializer(data=request.data)
         if serializer.is_valid():
-            email = serializer.data['email']
-            otp = serializer.data['otp']
+            email = serializer.validated_data['email']
+            otp = serializer.validated_data['otp']
             
             if verify_otp_via_email(email, otp):
                 try:
@@ -87,8 +83,8 @@ class LoginView(APIView):
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        email = serializer.data['email']
-        password = serializer.data['password']
+        email = serializer.validated_data['email']
+        password = serializer.validated_data['password']
 
         try:
             user = User.objects.get(email=email)
@@ -117,7 +113,7 @@ class LogoutView(APIView):
         serializer = LogoutSerializer(data=request.data)
         if serializer.is_valid():
             try:
-                refresh_token = serializer.data['refresh']
+                refresh_token = serializer.validated_data['refresh']
                 token = RefreshToken(refresh_token)
                 token.blacklist()
                 return Response({"message": "Successfully logged out."}, status=status.HTTP_200_OK)
@@ -131,7 +127,7 @@ class ResendOTPView(APIView):
     def post(self, request):
         serializer = ResendOTPSerializer(data=request.data)
         if serializer.is_valid():
-            email = serializer.data['email']
+            email = serializer.validated_data['email']
             if not User.objects.filter(email=email).exists():
                 return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
 
@@ -147,7 +143,7 @@ class ForgotPasswordView(APIView):
     def post(self, request):
         serializer = ForgotPasswordSerializer(data=request.data)
         if serializer.is_valid():
-            email = serializer.data['email']
+            email = serializer.validated_data['email']
             if User.objects.filter(email=email).exists():
                 send_otp_via_email(email)
                 return Response({"message": "OTP sent for password reset."}, status=status.HTTP_200_OK)
@@ -160,16 +156,20 @@ class ResetPasswordConfirmView(APIView):
     def post(self, request):
         serializer = ResetPasswordSerializer(data=request.data)
         if serializer.is_valid():
-            email = serializer.data['email']
-            otp = serializer.data['otp']
-            new_pass = serializer.data['new_password']
+            email = serializer.validated_data['email']
+            otp = serializer.validated_data['otp']
+            new_pass = serializer.validated_data['new_password']
 
             if verify_otp_via_email(email, otp):
                 try:
                     user = User.objects.get(email=email)
                     user.set_password(new_pass)
                     user.save()
-                    return Response({"message": "Password changed successfully."}, status=status.HTTP_200_OK)
+                    tokens = OutstandingToken.objects.filter(user=user)
+                    for token in tokens:
+                        _, _ = BlacklistedToken.objects.get_or_create(token=token)
+
+                    return Response({"message": "Password changed successfully. All other sessions logged out."}, status=status.HTTP_200_OK)
                 except User.DoesNotExist:
                     return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
             else:

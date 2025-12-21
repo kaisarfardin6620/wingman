@@ -1,4 +1,4 @@
-import random
+import secrets
 import logging
 from django.utils import timezone
 from datetime import timedelta
@@ -9,7 +9,7 @@ from .models import User, OneTimePassword
 logger = logging.getLogger(__name__)
 
 def generate_otp():
-    return str(random.randint(1000, 9999))
+    return ''.join([str(secrets.randbelow(10)) for _ in range(4)])
 
 def send_otp_via_email(email):
     otp_code = generate_otp()
@@ -19,7 +19,6 @@ def send_otp_via_email(email):
             user=user,
             defaults={
                 'otp': otp_code,
-                'created_at': timezone.now()
             }
         )
         

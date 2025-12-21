@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Tone, Persona, UserSettings, TargetProfile
+from .models import Tone, Persona, UserSettings, TargetProfile, GlobalConfig
 
 @admin.register(Tone)
 class ToneAdmin(admin.ModelAdmin):
@@ -11,8 +11,15 @@ class PersonaAdmin(admin.ModelAdmin):
 
 @admin.register(UserSettings)
 class UserSettingsAdmin(admin.ModelAdmin):
-    list_display = ('user', 'language', 'passcode_lock_enabled')
+    list_display = ('user', 'language', 'active_persona', 'passcode_lock_enabled')
 
 @admin.register(TargetProfile)
 class TargetProfileAdmin(admin.ModelAdmin):
     list_display = ('name', 'user', 'created_at')
+
+@admin.register(GlobalConfig)
+class GlobalConfigAdmin(admin.ModelAdmin):
+    list_display = ('daily_free_limit', 'max_chat_length', 'ocr_limit')
+
+    def has_add_permission(self, request):
+        return not GlobalConfig.objects.exists()
