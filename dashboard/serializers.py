@@ -35,12 +35,12 @@ class AdminUserListSerializer(serializers.ModelSerializer):
 class AdminToneSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tone
-        fields = ['id', 'name', 'icon_url', 'is_active']
+        fields = ['id', 'name', 'details', 'is_active']
 
 class AdminPersonaSerializer(serializers.ModelSerializer):
     class Meta:
         model = Persona
-        fields = ['id', 'name', 'description', 'icon_url', 'is_active']
+        fields = ['id', 'name', 'description', 'is_active']
 
 class GlobalConfigSerializer(serializers.ModelSerializer):
     class Meta:

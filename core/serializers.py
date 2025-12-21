@@ -5,12 +5,12 @@ from .models import Tone, Persona, UserSettings, TargetProfile
 class ToneSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tone
-        fields = ['id', 'name', 'icon_url']
+        fields = ['id', 'name', 'details']
 
 class PersonaSerializer(serializers.ModelSerializer):
     class Meta:
         model = Persona
-        fields = ['id', 'name', 'description', 'icon_url']
+        fields = ['id', 'name', 'description']
 
 class UserSettingsSerializer(serializers.ModelSerializer):
     selected_tones_details = ToneSerializer(source='active_tones', many=True, read_only=True)

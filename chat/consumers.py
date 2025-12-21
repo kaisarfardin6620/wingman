@@ -2,7 +2,8 @@ import json
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.contrib.auth import get_user_model
-from core.models import TargetProfile
+from django.utils import timezone
+from core.models import TargetProfile, GlobalConfig
 from .models import ChatSession, Message
 from .tasks import generate_ai_response, generate_chat_title
 
@@ -24,9 +25,17 @@ class ChatConsumer(AsyncWebsocketConsumer):
         data = json.loads(text_data)
         conversation_id = data.get('conversation_id')
         message_text = data.get('message')
-        target_id = data.get('target_id')
+        target_id = data.get('target_id') 
 
         if not message_text:
+            return
+
+        error_message = await self.check_limits(message_text)
+        if error_message:
+            await self.send(text_data=json.dumps({
+                'type': 'error',
+                'message': error_message
+            }))
             return
 
         session, created = await self.get_or_create_session(conversation_id, target_id)
@@ -58,6 +67,24 @@ class ChatConsumer(AsyncWebsocketConsumer):
             'conversation_id': event['conversation_id'],
             'message': event['message']
         }))
+
+    @database_sync_to_async
+    def check_limits(self, text):
+        if self.user.is_premium:
+            return None
+
+        config = GlobalConfig.load()
+
+        if len(text) > config.max_chat_length:
+            return f"Message too long. Free limit is {config.max_chat_length} characters."
+
+        today = timezone.now().date()
+        msg_count = Message.objects.filter(sender=self.user, created_at__date=today).count()
+        
+        if msg_count >= config.daily_free_limit:
+            return "Daily free limit reached. Upgrade to Premium."
+            
+        return None
 
     @database_sync_to_async
     def get_or_create_session(self, conversation_id, target_id=None):
