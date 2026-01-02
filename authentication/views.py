@@ -89,10 +89,10 @@ class LoginView(APIView):
         try:
             user = User.objects.get(email=email)
         except User.DoesNotExist:
-            return Response({"error": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED)
+            return Response({"error": "User with this email does not exist."}, status=status.HTTP_404_NOT_FOUND)
 
         if not user.check_password(password):
-            return Response({"error": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED)
+            return Response({"error": "Incorrect password."}, status=status.HTTP_401_UNAUTHORIZED)
 
         if not user.is_active:
             send_otp_via_email(email)
@@ -147,7 +147,7 @@ class ForgotPasswordView(APIView):
             if User.objects.filter(email=email).exists():
                 send_otp_via_email(email)
                 return Response({"message": "OTP sent for password reset."}, status=status.HTTP_200_OK)
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"error": "User with this email does not exist."}, status=status.HTTP_404_NOT_FOUND)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class ResetPasswordConfirmView(APIView):
