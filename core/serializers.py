@@ -5,7 +5,7 @@ from .models import Tone, Persona, UserSettings, TargetProfile
 class ToneSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tone
-        fields = ['id', 'name', 'details']
+        fields = ['id', 'name', 'description']
 
 class PersonaSerializer(serializers.ModelSerializer):
     class Meta:
@@ -28,10 +28,12 @@ class UserSettingsSerializer(serializers.ModelSerializer):
         fields = [
             'gold_theme', 'premium_logo', 'passcode_lock_enabled', 'passcode',
             'selected_tones_details', 'active_tones_ids',
-            'active_persona_details', 'active_persona_id'
+            'active_persona_details', 'active_persona_id',
+            'linguistic_style'
         ]
         extra_kwargs = {
             'passcode': {'write_only': True},
+            'linguistic_style': {'read_only': True}
         }
 
     def update(self, instance, validated_data):
@@ -43,3 +45,20 @@ class TargetProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = TargetProfile
         fields = ['id', 'name', 'preferences', 'what_she_likes', 'details', 'her_mentions', 'avatar', 'created_at']
+
+class PasscodeVerifySerializer(serializers.Serializer):
+    passcode = serializers.CharField(max_length=4)
+
+class ForgotPasscodeSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+class ResetPasscodeSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    otp = serializers.CharField(max_length=6)
+    new_passcode = serializers.CharField(max_length=4)
+    confirm_passcode = serializers.CharField(max_length=4)
+
+    def validate(self, attrs):
+        if attrs['new_passcode'] != attrs['confirm_passcode']:
+            raise serializers.ValidationError({"new_passcode": "Passcodes do not match."})
+        return attrs

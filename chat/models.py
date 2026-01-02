@@ -25,3 +25,13 @@ class Message(models.Model):
 
     class Meta:
         ordering = ['created_at']
+
+class DetectedEvent(models.Model):
+    session = models.ForeignKey(ChatSession, on_delete=models.CASCADE, related_name='events')
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    start_time = models.CharField(max_length=100)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.title

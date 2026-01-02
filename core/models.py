@@ -4,7 +4,7 @@ from django.contrib.auth.hashers import make_password, check_password
 
 class Tone(models.Model):
     name = models.CharField(max_length=50)
-    details = models.CharField(max_length=255, blank=True, null=True) 
+    description = models.CharField(max_length=255, blank=True, null=True) 
     is_active = models.BooleanField(default=True)
 
     def __str__(self):
@@ -12,7 +12,7 @@ class Tone(models.Model):
 
 class Persona(models.Model):
     name = models.CharField(max_length=50)
-    description = models.CharField(max_length=255, blank=True, null=True) 
+    description = models.TextField()
     is_active = models.BooleanField(default=True)
 
     def __str__(self):
@@ -41,6 +41,9 @@ class UserSettings(models.Model):
     language = models.CharField(max_length=50, default='English')
     active_persona = models.ForeignKey(Persona, on_delete=models.SET_NULL, null=True, blank=True)
     active_tones = models.ManyToManyField(Tone, blank=True)
+    
+    linguistic_style = models.TextField(blank=True, null=True)
+    
     passcode_lock_enabled = models.BooleanField(default=False)
     passcode = models.CharField(max_length=128, blank=True, null=True)
     gold_theme = models.BooleanField(default=False)

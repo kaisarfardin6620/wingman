@@ -1,0 +1,86 @@
+# --- Python cache and build artifacts ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+
+# --- Django/Project-specific files ---
+db.sqlite3
+celerybeat-schedule*
+media/
+
+# --- Virtual environments ---
+.venv/
+venv/
+ENV/
+
+# --- Version control ---
+.git/
+.gitignore
+
+# --- IDE/editor files ---
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# --- Build outputs ---
+dist/
+build/
+out/
+
+# --- Test and debug artifacts ---
+test/
+tests/
+*.log
+
+# --- Environment and secrets ---
+.env*
+*.env
+*.pem
+*.key
+*.crt
+
+# --- Local and temp files ---
+tmp/
+temp/
+*.tmp
+.local/
+local/
+
+# --- Documentation ---
+docs/
+*.md
+README*
+
+# --- Docker and Compose files (not needed in image) ---
+Dockerfile*
+docker-compose*
+
+# --- Miscellaneous ---
+*.sqlite3
+postman.json
+
+# --- Node.js (not detected, but for completeness) ---
+node_modules/
+npm-debug.log
+yarn-debug.log
+
+# --- Go (not detected, but for completeness) ---
+/vendor/
+*.test
+.go-cache/
+
+# --- Java (not detected, but for completeness) ---
+target/
+*.class
+.gradle/
+
+# --- SVN/Mercurial ---
+.svn/
+.hg/

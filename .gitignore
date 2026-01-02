@@ -23,3 +23,10 @@ celerybeat-schedule
 dump.rdb
 celerybeat-schedule-wal
 celerybeat-schedule-shm
+*.sqlite3
+*.log
+*.pyc
+*.pyo
+Dockerfile
+entrypoint.sh
+compose.yaml
