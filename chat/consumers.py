@@ -25,6 +25,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 self.room_group_name = f'chat_{self.conversation_id}'
                 await self.channel_layer.group_add(self.room_group_name, self.channel_name)
                 await self.accept()
+                history = await self.get_chat_history(session)
+                await self.send(text_data=json.dumps({
+                    'type': 'chat_history',
+                    'conversation_id': self.conversation_id,
+                    'messages': history
+                }))
             else:
                 await self.close()
         else:
@@ -35,9 +41,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
             await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
 
     async def receive(self, text_data):
-        data = json.loads(text_data)
+        try:
+            data = json.loads(text_data)
+        except json.JSONDecodeError:
+            return
+
         message_text = data.get('message')
         target_id = data.get('target_id') 
+        incoming_conversation_id = data.get('conversation_id')
 
         if not message_text:
             return
@@ -50,15 +61,37 @@ class ChatConsumer(AsyncWebsocketConsumer):
             }))
             return
 
+        session = None
+        created = False
+        send_history_flag = False
+
         if self.conversation_id:
             session = await self.get_session(self.conversation_id)
-            created = False
-        else:
+        
+        elif incoming_conversation_id:
+            session = await self.get_session(incoming_conversation_id)
+            if session:
+                self.conversation_id = str(session.conversation_id)
+                self.room_group_name = f'chat_{self.conversation_id}'
+                await self.channel_layer.group_add(self.room_group_name, self.channel_name)
+                send_history_flag = True 
+
+
+        if not session:
             session, created = await self.create_session(target_id)
             self.conversation_id = str(session.conversation_id)
             self.room_group_name = f'chat_{self.conversation_id}'
             await self.channel_layer.group_add(self.room_group_name, self.channel_name)
 
+        if send_history_flag:
+            history = await self.get_chat_history(session)
+            await self.send(text_data=json.dumps({
+                'type': 'chat_history',
+                'conversation_id': self.conversation_id,
+                'messages': history
+            }))
+
+        # 5. Save the new message
         user_msg = await self.save_message(session, message_text)
 
         await self.send(text_data=json.dumps({
@@ -103,6 +136,21 @@ class ChatConsumer(AsyncWebsocketConsumer):
             return ChatSession.objects.get(conversation_id=conversation_id, user=self.user)
         except ChatSession.DoesNotExist:
             return None
+
+    @database_sync_to_async
+    def get_chat_history(self, session):
+        messages = session.messages.all().order_by('created_at')
+        history_data = []
+        for msg in messages:
+            history_data.append({
+                'id': msg.id,
+                'text': msg.text,
+                'is_ai': msg.is_ai,
+                'image': msg.image.url if msg.image else None,
+                'ocr_text': msg.ocr_extracted_text,
+                'created_at': str(msg.created_at)
+            })
+        return history_data
 
     @database_sync_to_async
     def create_session(self, target_id=None):
