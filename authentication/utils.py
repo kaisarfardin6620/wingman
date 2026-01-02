@@ -9,7 +9,7 @@ from .models import User, OneTimePassword
 logger = logging.getLogger(__name__)
 
 def generate_otp():
-    return ''.join([str(secrets.randbelow(10)) for _ in range(4)])
+    return ''.join([str(secrets.randbelow(10)) for _ in range(6)])
 
 def send_otp_via_email(email):
     otp_code = generate_otp()

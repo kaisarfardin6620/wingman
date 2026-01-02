@@ -6,9 +6,11 @@ from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from django.contrib.auth import get_user_model
 from django.conf import settings
 import urllib.parse
+import logging
 
 User = get_user_model()
 
+logger = logging.getLogger(__name__)
 @database_sync_to_async
 def get_user(token_key):
     try:
@@ -20,7 +22,7 @@ def get_user(token_key):
             return AnonymousUser()
         return User.objects.get(id=user_id)
     except (InvalidToken, TokenError, User.DoesNotExist, Exception) as e:
-        print(f"WebSocket Auth Failed: {e}") 
+        logger.warning(f"WebSocket Auth Failed: {e}") 
         return AnonymousUser()
 
 class JwtAuthMiddleware(BaseMiddleware):
