@@ -1,6 +1,7 @@
 import json
 import base64
 import os
+import logging
 from celery import shared_task
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
@@ -10,12 +11,24 @@ from .models import ChatSession, Message, DetectedEvent
 from core.models import UserSettings
 
 client = OpenAI(api_key=settings.OPENAI_API_KEY)
+logger = logging.getLogger(__name__)
 
 def encode_image(image_path):
     if not os.path.exists(image_path):
         return None
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode('utf-8')
+
+def send_ws_message(session_id, data):
+    channel_layer = get_channel_layer()
+    async_to_sync(channel_layer.group_send)(
+        f'chat_{session_id}',
+        {
+            'type': 'chat_message',
+            'conversation_id': str(session_id),
+            'message': data
+        }
+    )
 
 @shared_task
 def generate_ai_response(session_id, user_text):
@@ -75,27 +88,29 @@ def generate_ai_response(session_id, user_text):
 
         ai_msg = Message.objects.create(session=session, is_ai=True, text=ai_reply)
         
-        channel_layer = get_channel_layer()
-        async_to_sync(channel_layer.group_send)(
-            f'chat_{session.conversation_id}',
-            {
-                'type': 'chat_message',
-                'conversation_id': str(session.conversation_id),
-                'message': {
-                    'id': ai_msg.id,
-                    'text': ai_msg.text,
-                    'is_ai': True,
-                    'created_at': str(ai_msg.created_at)
-                }
-            }
-        )
+        send_ws_message(session.conversation_id, {
+            'id': ai_msg.id,
+            'text': ai_msg.text,
+            'is_ai': True,
+            'created_at': str(ai_msg.created_at)
+        })
 
+        time_keywords = ['tomorrow', 'tonight', 'meet', 'date', 'clock', 'pm', 'am', 'schedule']
+        if any(word in user_text.lower() for word in time_keywords):
+            intent_engine.delay(session.id, user_text)
         profile_target_engine.delay(session.id, user_text)
-        intent_engine.delay(session.id, user_text)
-        linguistic_engine.delay(session.user.id, session.id)
+        user_msg_count = session.messages.filter(sender=session.user).count()
+        if user_msg_count % 10 == 0:
+            linguistic_engine.delay(session.user.id, session.id)
 
     except Exception as e:
-        print(f"AI Generation Error: {e}")
+        logger.error(f"AI Generation Error: {e}")
+        send_ws_message(session.conversation_id, {
+            'id': None,
+            'text': "Sorry, I'm having trouble connecting to the AI. Please try again.",
+            'is_ai': True,
+            'type': 'error'
+        })
 
 @shared_task
 def analyze_screenshot_task(message_id):
@@ -107,7 +122,7 @@ def analyze_screenshot_task(message_id):
         if not base64_image: return 
         
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o", # Keep 4o for vision
             messages=[
                 {
                     "role": "user",
@@ -124,40 +139,31 @@ def analyze_screenshot_task(message_id):
         message.ocr_extracted_text = ai_content.get('extracted_text', '')
         message.save()
 
-        channel_layer = get_channel_layer()
-        async_to_sync(channel_layer.group_send)(
-            f'chat_{message.session.id}',
-            {
-                'type': 'chat_message',
-                'conversation_id': str(message.session.conversation_id),
-                'message': {
-                    'id': message.id, 
-                    'type': 'analysis_complete', 
-                    'ocr_text': message.ocr_extracted_text
-                }
-            }
-        )
+        send_ws_message(message.session.conversation_id, {
+            'id': message.id, 
+            'type': 'analysis_complete', 
+            'ocr_text': message.ocr_extracted_text
+        })
     except Exception as e:
-        print(f"OCR Error: {e}")
+        logger.error(f"OCR Error: {e}")
 
 @shared_task
 def profile_target_engine(session_id, latest_text):
     try:
         session = ChatSession.objects.get(id=session_id)
-        if not session.target_profile:
-            return
+        if not session.target_profile: return
 
         tp = session.target_profile
         
         prompt = (
-            f"Analyze this message regarding '{tp.name}'. Extract any NEW specific likes, dislikes, or preferences mentioned.\n"
+            f"Analyze this message regarding '{tp.name}'. Extract NEW likes/preferences.\n"
             f"Current Likes: {tp.what_she_likes}\n"
             f"Message: \"{latest_text}\"\n"
             "Return JSON only: {\"new_likes\": [], \"new_preferences\": []}"
         )
 
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini", 
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"}
         )
@@ -179,43 +185,40 @@ def profile_target_engine(session_id, latest_text):
 
         if updated:
             tp.save()
-            print(f"AUTO-PROFILING: Updated {tp.name} with new data.")
+            logger.info(f"AUTO-PROFILING: Updated {tp.name}")
 
     except Exception as e:
-        print(f"Profiling Error: {e}")
+        logger.error(f"Profiling Error: {e}")
 
 @shared_task
 def linguistic_engine(user_id, session_id):
     try:
-        session = ChatSession.objects.get(id=session_id)
         user_settings, _ = UserSettings.objects.get_or_create(user_id=user_id)
         
         user_msgs = Message.objects.filter(sender_id=user_id, is_ai=False).order_by('-created_at')[:10]
-        if not user_msgs:
-            return
+        if not user_msgs: return
 
         text_sample = "\n".join([m.text for m in user_msgs if m.text])
 
         prompt = (
-            "Analyze the writing style of this user based on their messages.\n"
-            "Describe: Sentence length, capitalization, emoji usage, tone, and slang.\n"
-            "Keep it concise (1-2 sentences).\n"
+            "Analyze writing style. Describe: Sentence length, caps, emoji, tone, slang.\n"
+            "Concise (1-2 sentences).\n"
             f"Messages:\n{text_sample}"
         )
 
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=60
+            max_tokens=100
         )
         
         style_desc = response.choices[0].message.content.strip()
         user_settings.linguistic_style = style_desc
         user_settings.save()
-        print(f"LINGUISTIC ENGINE: Updated User Style to: {style_desc}")
+        logger.info(f"LINGUISTIC ENGINE: Updated style")
 
     except Exception as e:
-        print(f"Linguistic Error: {e}")
+        logger.error(f"Linguistic Error: {e}")
 
 @shared_task
 def intent_engine(session_id, user_text):
@@ -225,12 +228,11 @@ def intent_engine(session_id, user_text):
         prompt = (
             "Does this message contain a concrete plan, date, or meeting time?\n"
             f"Message: \"{user_text}\"\n"
-            "If yes, extract: Title, Start Time. If no, return empty JSON.\n"
             "Return JSON: {\"is_event\": boolean, \"title\": string, \"start_time\": string}"
         )
 
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"}
         )
@@ -243,19 +245,19 @@ def intent_engine(session_id, user_text):
                 title=data.get('title', 'New Event'),
                 start_time=data.get('start_time', '')
             )
-            print(f"INTENT ENGINE: Detected Event - {data.get('title')}")
+            logger.info(f"INTENT ENGINE: Detected Event - {data.get('title')}")
 
     except Exception as e:
-        print(f"Intent Error: {e}")
+        logger.error(f"Intent Error: {e}")
 
 @shared_task
 def generate_chat_title(session_id, first_message):
     try:
         session = ChatSession.objects.get(id=session_id)
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "Generate a concise 3-4 word title for this chat. No quotes."},
+                {"role": "system", "content": "Generate a 3-4 word title. No quotes."},
                 {"role": "user", "content": first_message}
             ],
             max_tokens=20

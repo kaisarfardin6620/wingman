@@ -41,9 +41,7 @@ class UserSettings(models.Model):
     language = models.CharField(max_length=50, default='English')
     active_persona = models.ForeignKey(Persona, on_delete=models.SET_NULL, null=True, blank=True)
     active_tones = models.ManyToManyField(Tone, blank=True)
-    
     linguistic_style = models.TextField(blank=True, null=True)
-    
     passcode_lock_enabled = models.BooleanField(default=False)
     passcode = models.CharField(max_length=128, blank=True, null=True)
     gold_theme = models.BooleanField(default=False)

@@ -15,15 +15,27 @@ class ChatConsumer(AsyncWebsocketConsumer):
         if self.user.is_anonymous:
             await self.close()
             return
-        await self.accept()
+        
+        self.conversation_id = self.scope['url_route']['kwargs'].get('conversation_id')
+        self.room_group_name = None
+
+        if self.conversation_id:
+            session = await self.get_session(self.conversation_id)
+            if session:
+                self.room_group_name = f'chat_{self.conversation_id}'
+                await self.channel_layer.group_add(self.room_group_name, self.channel_name)
+                await self.accept()
+            else:
+                await self.close()
+        else:
+            await self.accept()
 
     async def disconnect(self, close_code):
-        if hasattr(self, 'room_group_name'):
+        if self.room_group_name:
             await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
 
     async def receive(self, text_data):
         data = json.loads(text_data)
-        conversation_id = data.get('conversation_id')
         message_text = data.get('message')
         target_id = data.get('target_id') 
 
@@ -38,10 +50,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
             }))
             return
 
-        session, created = await self.get_or_create_session(conversation_id, target_id)
-        
-        self.room_group_name = f'chat_{session.conversation_id}'
-        await self.channel_layer.group_add(self.room_group_name, self.channel_name)
+        if self.conversation_id:
+            session = await self.get_session(self.conversation_id)
+            created = False
+        else:
+            session, created = await self.create_session(target_id)
+            self.conversation_id = str(session.conversation_id)
+            self.room_group_name = f'chat_{self.conversation_id}'
+            await self.channel_layer.group_add(self.room_group_name, self.channel_name)
 
         user_msg = await self.save_message(session, message_text)
 
@@ -72,35 +88,30 @@ class ChatConsumer(AsyncWebsocketConsumer):
     def check_limits(self, text):
         if self.user.is_premium:
             return None
-
         config = GlobalConfig.load()
-
         if len(text) > config.max_chat_length:
             return f"Message too long. Free limit is {config.max_chat_length} characters."
-
         today = timezone.now().date()
         msg_count = Message.objects.filter(sender=self.user, created_at__date=today).count()
-        
         if msg_count >= config.daily_free_limit:
             return "Daily free limit reached. Upgrade to Premium."
-            
         return None
 
     @database_sync_to_async
-    def get_or_create_session(self, conversation_id, target_id=None):
-        if conversation_id:
-            try:
-                return ChatSession.objects.get(conversation_id=conversation_id, user=self.user), False
-            except ChatSession.DoesNotExist:
-                pass
-        
+    def get_session(self, conversation_id):
+        try:
+            return ChatSession.objects.get(conversation_id=conversation_id, user=self.user)
+        except ChatSession.DoesNotExist:
+            return None
+
+    @database_sync_to_async
+    def create_session(self, target_id=None):
         target = None
         if target_id:
             try:
                 target = TargetProfile.objects.get(id=target_id, user=self.user)
             except TargetProfile.DoesNotExist:
                 pass
-
         session = ChatSession.objects.create(user=self.user, target_profile=target)
         return session, True
 
