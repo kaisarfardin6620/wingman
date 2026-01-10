@@ -24,7 +24,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
         if self.conversation_id:
             session = await self.get_session_cached(self.conversation_id)
-            
             if session:
                 self.room_group_name = f'chat_{self.conversation_id}'
                 await self.channel_layer.group_add(self.room_group_name, self.channel_name)
@@ -49,22 +48,20 @@ class ChatConsumer(AsyncWebsocketConsumer):
         try:
             data = json.loads(text_data)
         except json.JSONDecodeError:
-            logger.warning(f"Invalid JSON from user {self.user.id}")
             return
 
         message_text = data.get('message', '').strip()
         target_id = data.get('target_id')
         incoming_conversation_id = data.get('conversation_id')
+        
+        selected_tone = data.get('tone', None)
 
         if not message_text:
             return
 
         error_message = await self.check_limits_cached(message_text)
         if error_message:
-            await self.send(text_data=json.dumps({
-                'type': 'error',
-                'message': error_message
-            }))
+            await self.send(text_data=json.dumps({'type': 'error', 'message': error_message}))
             return
 
         session = None
@@ -108,7 +105,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             }
         }))
 
-        generate_ai_response.delay(session.id, message_text)
+        generate_ai_response.delay(session.id, message_text, selected_tone)
         
         if created:
             generate_chat_title.delay(session.id, message_text)
@@ -125,31 +122,20 @@ class ChatConsumer(AsyncWebsocketConsumer):
     @database_sync_to_async
     def get_session_cached(self, conversation_id):
         cache_key = f"chat_session:{conversation_id}:{self.user.id}"
-        
         cached = cache.get(cache_key)
-        if cached:
-            return cached
-        
+        if cached: return cached
         try:
-            session = ChatSession.objects.select_related(
-                'user', 'target_profile'
-            ).get(conversation_id=conversation_id, user=self.user)
-            
+            session = ChatSession.objects.select_related('user', 'target_profile').get(conversation_id=conversation_id, user=self.user)
             cache.set(cache_key, session, 300)
             return session
-        except ChatSession.DoesNotExist:
-            return None
+        except ChatSession.DoesNotExist: return None
 
     @database_sync_to_async
     def get_chat_history_cached(self, session):
         cache_key = f"chat_history:{session.conversation_id}"
         cached = cache.get(cache_key)
-        if cached:
-            return cached
-        messages = session.messages.only(
-            'id', 'text', 'is_ai', 'image', 'ocr_extracted_text', 'created_at'
-        ).order_by('created_at')
-        
+        if cached: return cached
+        messages = session.messages.only('id', 'text', 'is_ai', 'image', 'ocr_extracted_text', 'created_at').order_by('created_at')
         history_data = []
         for msg in messages:
             history_data.append({
@@ -160,64 +146,41 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 'ocr_text': msg.ocr_extracted_text,
                 'created_at': str(msg.created_at)
             })
-        
         cache.set(cache_key, history_data, 120)
         return history_data
 
     @database_sync_to_async
     def check_limits_cached(self, text):
-        if self.user.is_premium:
-            return None
-            
+        if self.user.is_premium: return None
         cache_key = "global_config"
         config = cache.get(cache_key)
         if not config:
             config = GlobalConfig.load()
             cache.set(cache_key, config, 3600)
-            
         if len(text) > config.max_chat_length:
             return f"Message too long. Free limit is {config.max_chat_length} characters."
-            
         today = timezone.now().date()
         count_cache_key = f"msg_count:{self.user.id}:{today}"
-        
         added = cache.add(count_cache_key, 1, timeout=86400)
-        if added:
-            current_count = 1
-        else:
-            current_count = cache.incr(count_cache_key)
-            
+        if added: current_count = 1
+        else: current_count = cache.incr(count_cache_key)
         if current_count > config.daily_free_limit:
             return "Daily free limit reached. Upgrade to Premium."
-        
         return None
 
     @database_sync_to_async
     def create_session(self, target_id=None):
         target = None
         if target_id:
-            try:
-                target = TargetProfile.objects.get(id=target_id, user=self.user)
-            except TargetProfile.DoesNotExist:
-                logger.warning(f"Target profile {target_id} not found for user {self.user.id}")
-        
-        session = ChatSession.objects.create(
-            user=self.user, 
-            target_profile=target
-        )
-        
+            try: target = TargetProfile.objects.get(id=target_id, user=self.user)
+            except TargetProfile.DoesNotExist: pass
+        session = ChatSession.objects.create(user=self.user, target_profile=target)
         return session, True
 
     @database_sync_to_async
     def save_message(self, session, text):
-        message = Message.objects.create(
-            session=session, 
-            sender=self.user, 
-            text=text, 
-            is_ai=False
-        )
+        message = Message.objects.create(session=session, sender=self.user, text=text, is_ai=False)
         session.update_preview()
-        
         return message
 
     @database_sync_to_async

@@ -2,7 +2,8 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
     ConfigDataView, UserSettingsView, TargetProfileViewSet,
-    VerifyPasscodeView, ForgotPasscodeRequestView, ResetPasscodeConfirmView
+    VerifyPasscodeView, ForgotPasscodeRequestView, ResetPasscodeConfirmView,
+    FCMTokenView
 )
 
 router = DefaultRouter()
@@ -14,6 +15,6 @@ urlpatterns = [
     path('passcode/verify/', VerifyPasscodeView.as_view(), name='passcode-verify'),
     path('passcode/forgot/', ForgotPasscodeRequestView.as_view(), name='passcode-forgot'),
     path('passcode/reset/', ResetPasscodeConfirmView.as_view(), name='passcode-reset'),
-    
+    path('fcm/register/', FCMTokenView.as_view(), name='fcm-register'),
     path('', include(router.urls)),
 ]

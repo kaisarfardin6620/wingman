@@ -26,7 +26,9 @@ class UserSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserSettings
         fields = [
-            'gold_theme', 'premium_logo', 'passcode_lock_enabled', 'passcode',
+            'gold_theme', 'premium_logo', 
+            'passcode_lock_enabled', 'passcode',
+            'hide_notifications',
             'selected_tones_details', 'active_tones_ids',
             'active_persona_details', 'active_persona_id',
             'linguistic_style'
@@ -54,7 +56,7 @@ class ForgotPasscodeSerializer(serializers.Serializer):
 
 class ResetPasscodeSerializer(serializers.Serializer):
     email = serializers.EmailField()
-    otp = serializers.CharField(max_length=6)
+    otp = serializers.CharField(max_length=4)
     new_passcode = serializers.CharField(max_length=4)
     confirm_passcode = serializers.CharField(max_length=4)
 

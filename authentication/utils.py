@@ -8,7 +8,7 @@ from .tasks import send_otp_email_task
 logger = logging.getLogger(__name__)
 
 def generate_otp():
-    return ''.join([str(secrets.randbelow(10)) for _ in range(6)])
+    return ''.join([str(secrets.randbelow(10)) for _ in range(4)])
 
 def send_otp_via_email(email):
     otp_code = generate_otp()
@@ -21,12 +21,9 @@ def send_otp_via_email(email):
                 'created_at': timezone.now()
             }
         )
-        
         send_otp_email_task.delay(email, otp_code)
-        
         return True, "OTP sent successfully"
     except User.DoesNotExist:
-        logger.warning(f"Attempted to send OTP to non-existent user: {email}")
         return False, "User not found"
     except Exception as e:
         logger.error(f"Error in send_otp_via_email: {str(e)}")
