@@ -11,13 +11,11 @@ __pycache__/
 *.log
 migrations
 .env 
-db.sqlite3
 .venv
 __pycache__
 migrations
 debug.log
 postman.json
-media
 staticfiles
 celerybeat-schedule
 dump.rdb
@@ -27,6 +25,5 @@ celerybeat-schedule-shm
 *.log
 *.pyc
 *.pyo
-Dockerfile
-entrypoint.sh
-compose.yaml
+chat_uploads
+profile_images
