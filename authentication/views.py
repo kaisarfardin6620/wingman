@@ -347,3 +347,24 @@ class AppleLoginView(APIView):
         except Exception as e:
             logger.error(f"Apple Login Failed: {str(e)}", exc_info=True)
             return Response({"detail": "Apple authentication failed"}, status=status.HTTP_400_BAD_REQUEST)
+        
+class ChangePasswordView(APIView):
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [UserRateThrottle]
+
+    def post(self, request):
+        serializer = UserChangePasswordSerializer(data=request.data, context={'request': request})
+        
+        if serializer.is_valid():
+            user = request.user
+            user.set_password(serializer.validated_data['new_password'])
+            user.save()
+            
+            from django.contrib.auth import update_session_auth_hash
+            update_session_auth_hash(request, user)
+            
+            send_push_notification(user, "Security Alert", "Your password was changed.")
+            
+            return Response({"message": "Password changed successfully."}, status=status.HTTP_200_OK)
+            
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
