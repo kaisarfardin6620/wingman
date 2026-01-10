@@ -10,7 +10,7 @@ from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
 from django.shortcuts import get_object_or_404
 from authentication.utils import send_otp_via_email, verify_otp_via_email
-from .models import Tone, Persona, UserSettings, TargetProfile
+from .models import Tone, Persona, UserSettings, TargetProfile, FCMDevice
 from .serializers import (
     ToneSerializer, PersonaSerializer,
     UserSettingsSerializer, TargetProfileSerializer,
@@ -21,10 +21,8 @@ import logging
 User = get_user_model()
 logger = logging.getLogger(__name__)
 
-
 class ConfigThrottle(UserRateThrottle):
     rate = '30/minute'
-
 
 class ConfigDataView(APIView):
     permission_classes = [IsAuthenticated]
@@ -53,7 +51,6 @@ class ConfigDataView(APIView):
             "personas": personas_data
         })
 
-
 class UserSettingsView(APIView):
     permission_classes = [IsAuthenticated]
     throttle_classes = [UserRateThrottle]
@@ -72,9 +69,7 @@ class UserSettingsView(APIView):
         ).get_or_create(user=request.user)
         
         serializer = UserSettingsSerializer(settings)
-        
         cache.set(cache_key, serializer.data, 300)
-        
         return Response(serializer.data)
 
     def patch(self, request):
@@ -89,16 +84,13 @@ class UserSettingsView(APIView):
         
         if serializer.is_valid():
             serializer.save()
-            
             cache.delete(f"user_settings:{request.user.id}")
-            
             return Response({
                 "message": "Settings updated successfully",
                 "data": serializer.data
             })
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
 
 class TargetProfileViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
@@ -123,24 +115,15 @@ class TargetProfileViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         if not self.request.user.is_premium:
             profile_count = TargetProfile.objects.filter(user=self.request.user).count()
-            
             if profile_count >= 10:
                 from rest_framework.exceptions import PermissionDenied
-                raise PermissionDenied(
-                    "Free users can only create up to 10 target profiles. Upgrade to Premium for unlimited profiles."
-                )
-        
+                raise PermissionDenied("Free limit reached.")
         serializer.save(user=self.request.user)
     
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
         instance.delete()
-        
-        return Response(
-            {"message": "Target profile deleted successfully"},
-            status=status.HTTP_204_NO_CONTENT
-        )
-
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 class VerifyPasscodeView(APIView):
     permission_classes = [IsAuthenticated]
@@ -148,19 +131,15 @@ class VerifyPasscodeView(APIView):
 
     def post(self, request):
         serializer = PasscodeVerifySerializer(data=request.data)
-        
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
         passcode_input = serializer.validated_data['passcode']
-        
         cache_key = f"passcode_attempts:{request.user.id}"
         attempts = cache.get(cache_key, 0)
         
         if attempts >= 5:
-            return Response({
-                "error": "Too many failed attempts. Please try again in 15 minutes."
-            }, status=status.HTTP_429_TOO_MANY_REQUESTS)
+            return Response({"error": "Too many attempts"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
         
         try:
             user_settings = request.user.settings
@@ -168,25 +147,14 @@ class VerifyPasscodeView(APIView):
             user_settings, _ = UserSettings.objects.get_or_create(user=request.user)
         
         if not user_settings.passcode_lock_enabled:
-            return Response({
-                "message": "Passcode lock is not enabled."
-            }, status=status.HTTP_200_OK)
+            return Response({"message": "Passcode not enabled"}, status=status.HTTP_200_OK)
 
         if user_settings.check_passcode(passcode_input):
             cache.delete(cache_key)
-            return Response({
-                "success": True,
-                "message": "Passcode verified successfully"
-            }, status=status.HTTP_200_OK)
+            return Response({"success": True}, status=status.HTTP_200_OK)
         else:
             cache.set(cache_key, attempts + 1, 900)
-            remaining = 4 - attempts
-            
-            return Response({
-                "success": False,
-                "error": f"Incorrect passcode. {remaining} attempts remaining."
-            }, status=status.HTTP_400_BAD_REQUEST)
-
+            return Response({"success": False, "error": "Incorrect passcode"}, status=status.HTTP_400_BAD_REQUEST)
 
 class ForgotPasscodeRequestView(APIView):
     permission_classes = [IsAuthenticated]
@@ -194,16 +162,9 @@ class ForgotPasscodeRequestView(APIView):
 
     def post(self, request):
         success, message = send_otp_via_email(request.user.email)
-        
         if success:
-            return Response({
-                "message": "OTP sent to your email."
-            }, status=status.HTTP_200_OK)
-        else:
-            return Response({
-                "error": message
-            }, status=status.HTTP_400_BAD_REQUEST)
-
+            return Response({"message": "OTP sent"}, status=status.HTTP_200_OK)
+        return Response({"error": message}, status=status.HTTP_400_BAD_REQUEST)
 
 class ResetPasscodeConfirmView(APIView):
     permission_classes = [IsAuthenticated]
@@ -211,7 +172,6 @@ class ResetPasscodeConfirmView(APIView):
 
     def post(self, request):
         serializer = ResetPasscodeSerializer(data=request.data)
-        
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -222,26 +182,26 @@ class ResetPasscodeConfirmView(APIView):
         success, message = verify_otp_via_email(email, otp)
         
         if success:
-            try:
-                settings = request.user.settings
-            except UserSettings.DoesNotExist:
-                settings, _ = UserSettings.objects.get_or_create(user=request.user)
-            
-            try:
-                settings.set_passcode(new_passcode)
-                settings.passcode_lock_enabled = True
-                settings.save()
-                cache.delete(f"passcode_attempts:{request.user.id}")
-                
-                return Response({
-                    "message": "Passcode reset successfully."
-                }, status=status.HTTP_200_OK)
-                
-            except ValueError as e:
-                return Response({
-                    "error": str(e)
-                }, status=status.HTTP_400_BAD_REQUEST)
-        else:
-            return Response({
-                "error": message
-            }, status=status.HTTP_400_BAD_REQUEST)
+            settings, _ = UserSettings.objects.get_or_create(user=request.user)
+            settings.set_passcode(new_passcode)
+            settings.passcode_lock_enabled = True
+            settings.save()
+            cache.delete(f"passcode_attempts:{request.user.id}")
+            return Response({"message": "Passcode reset"}, status=status.HTTP_200_OK)
+        return Response({"error": message}, status=status.HTTP_400_BAD_REQUEST)
+
+class FCMTokenView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        token = request.data.get('token')
+        device_type = request.data.get('device_type', 'android')
+        
+        if token:
+            FCMDevice.objects.update_or_create(
+                user=request.user,
+                token=token,
+                defaults={'device_type': device_type}
+            )
+            return Response({"message": "Token registered"})
+        return Response({"error": "Token required"}, status=400)

@@ -14,14 +14,15 @@ from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
 from allauth.socialaccount.providers.oauth2.client import OAuth2Client
 from allauth.socialaccount.providers.apple.views import AppleOAuth2Adapter
 from allauth.socialaccount.providers.apple.client import AppleOAuth2Client
+from core.utils import send_push_notification
 from .serializers import *
 from .models import User
 from .utils import send_otp_via_email, verify_otp_via_email
 
 logger = logging.getLogger(__name__)
+
 class OTPRateThrottle(AnonRateThrottle):
     rate = '5/minute'
-
 
 class RegisterView(APIView):
     throttle_classes = [AnonRateThrottle]
@@ -51,7 +52,6 @@ class RegisterView(APIView):
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-
 class VerifyOTPView(APIView):
     throttle_classes = [OTPRateThrottle]
 
@@ -80,18 +80,11 @@ class VerifyOTPView(APIView):
                     }, status=status.HTTP_200_OK)
                     
                 except User.DoesNotExist:
-                    return Response(
-                        {"error": "User not found"}, 
-                        status=status.HTTP_404_NOT_FOUND
-                    )
+                    return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
             else:
-                return Response(
-                    {"error": message}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+                return Response({"error": message}, status=status.HTTP_400_BAD_REQUEST)
             
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
 
 class LoginView(APIView):
     throttle_classes = [AnonRateThrottle]
@@ -105,9 +98,10 @@ class LoginView(APIView):
         password = serializer.validated_data['password']
         cache_key = f"login_attempts:{email}"
         attempts = cache.get(cache_key, 0)
+        
         if attempts >= 5:
             return Response(
-                {"error": "Account temporarily locked due to multiple failed login attempts. Try again in 15 minutes."},
+                {"error": "Account temporarily locked. Try again in 15 minutes."},
                 status=status.HTTP_429_TOO_MANY_REQUESTS
             )
 
@@ -115,26 +109,20 @@ class LoginView(APIView):
             user = User.objects.get(email=email)
         except User.DoesNotExist:
             cache.set(cache_key, attempts + 1, 900)
-            return Response(
-                {"error": "Invalid credentials."}, 
-                status=status.HTTP_401_UNAUTHORIZED
-            )
+            return Response({"error": "Invalid credentials."}, status=status.HTTP_401_UNAUTHORIZED)
 
         if not user.check_password(password):
             cache.set(cache_key, attempts + 1, 900)
-            return Response(
-                {"error": "Invalid credentials."}, 
-                status=status.HTTP_401_UNAUTHORIZED
-            )
+            return Response({"error": "Invalid credentials."}, status=status.HTTP_401_UNAUTHORIZED)
 
         if not user.is_active:
             success, message = send_otp_via_email(email)
-            return Response(
-                {"error": "Account not active. OTP sent to email."}, 
-                status=status.HTTP_403_FORBIDDEN
-            )
+            return Response({"error": "Account not active. OTP sent to email."}, status=status.HTTP_403_FORBIDDEN)
+        
         cache.delete(cache_key)
         
+        send_push_notification(user, "New Login", "Your account was just accessed.")
+
         tokens = user.tokens
         return Response({
             "message": "Successfully logged in.",
@@ -154,18 +142,14 @@ class LogoutView(APIView):
                 refresh_token = serializer.validated_data['refresh']
                 token = RefreshToken(refresh_token)
                 token.blacklist()
-                cache_pattern = f"ws_user:*{request.user.id}*"
-                return Response(
-                    {"message": "Successfully logged out."}, 
-                    status=status.HTTP_200_OK
-                )
+                fcm_token = request.data.get('fcm_token')
+                if fcm_token:
+                    request.user.fcm_devices.filter(token=fcm_token).delete()
+                
+                return Response({"message": "Successfully logged out."}, status=status.HTTP_200_OK)
             except TokenError:
-                return Response(
-                    {"error": "Invalid token"}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+                return Response({"error": "Invalid token"}, status=status.HTTP_400_BAD_REQUEST)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
 
 class ResendOTPView(APIView):
     throttle_classes = [OTPRateThrottle]
@@ -176,26 +160,16 @@ class ResendOTPView(APIView):
             email = serializer.validated_data['email']
             
             if not User.objects.filter(email=email).exists():
-                return Response(
-                    {"error": "User not found."}, 
-                    status=status.HTTP_404_NOT_FOUND
-                )
+                return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
 
             success, message = send_otp_via_email(email)
             
             if success:
-                return Response(
-                    {"message": message}, 
-                    status=status.HTTP_200_OK
-                )
+                return Response({"message": message}, status=status.HTTP_200_OK)
             else:
-                return Response(
-                    {"error": message}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+                return Response({"error": message}, status=status.HTTP_400_BAD_REQUEST)
                 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
 
 class ForgotPasswordView(APIView):
     throttle_classes = [OTPRateThrottle]
@@ -205,24 +179,18 @@ class ForgotPasswordView(APIView):
         if serializer.is_valid():
             email = serializer.validated_data['email']
             
-            if User.objects.filter(email=email).exists():
+            try:
+                user = User.objects.get(email=email)
                 success, message = send_otp_via_email(email)
                 
                 if success:
-                    return Response(
-                        {"message": "OTP sent for password reset."}, 
-                        status=status.HTTP_200_OK
-                    )
+                    send_push_notification(user, "Password Reset", "An OTP was sent to reset your password.")
+                    
+                    return Response({"message": "OTP sent for password reset."}, status=status.HTTP_200_OK)
                 else:
-                    return Response(
-                        {"error": message}, 
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-            else:
-                return Response(
-                    {"message": "If the email exists, an OTP has been sent."}, 
-                    status=status.HTTP_200_OK
-                )
+                    return Response({"error": message}, status=status.HTTP_400_BAD_REQUEST)
+            except User.DoesNotExist:
+                return Response({"message": "If the email exists, an OTP has been sent."}, status=status.HTTP_200_OK)
                 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -248,21 +216,14 @@ class ResetPasswordConfirmView(APIView):
                         for token in tokens:
                             BlacklistedToken.objects.get_or_create(token=token)
 
-                    return Response(
-                        {"message": "Password reset successfully. All sessions logged out."}, 
-                        status=status.HTTP_200_OK
-                    )
+                    send_push_notification(user, "Security Alert", "Your password has been changed successfully.")
+
+                    return Response({"message": "Password reset successfully. All sessions logged out."}, status=status.HTTP_200_OK)
                     
                 except User.DoesNotExist:
-                    return Response(
-                        {"error": "User not found"}, 
-                        status=status.HTTP_404_NOT_FOUND
-                    )
+                    return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
             else:
-                return Response(
-                    {"error": message}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+                return Response({"error": message}, status=status.HTTP_400_BAD_REQUEST)
                 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -296,6 +257,8 @@ class UserProfileView(APIView):
             cache_key = f"user_profile:{request.user.id}"
             cache.delete(cache_key)
             
+            send_push_notification(request.user, "Profile Updated", "Your profile details have been updated.")
+            
             return Response({
                 "message": "Profile updated successfully",
                 "data": serializer.data
@@ -311,10 +274,7 @@ class GoogleLoginView(APIView):
         try:
             access_token = request.data.get("access_token")
             if not access_token:
-                return Response(
-                    {"detail": "Access token required"}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+                return Response({"detail": "Access token required"}, status=status.HTTP_400_BAD_REQUEST)
             
             adapter = GoogleOAuth2Adapter(request)
             app = adapter.get_provider().get_app(request)
@@ -330,8 +290,9 @@ class GoogleLoginView(APIView):
             login.state = {} 
             login.save(request)
             
-            tokens = login.user.tokens
+            send_push_notification(login.user, "New Login", "Logged in via Google.")
             
+            tokens = login.user.tokens
             return Response({
                 "message": "Login successful",
                 "token": tokens['access'],
@@ -341,11 +302,7 @@ class GoogleLoginView(APIView):
             
         except Exception as e:
             logger.error(f"Google Login Failed: {str(e)}", exc_info=True)
-            return Response(
-                {"detail": "Google authentication failed"}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
+            return Response({"detail": "Google authentication failed"}, status=status.HTTP_400_BAD_REQUEST)
 
 class AppleLoginView(APIView):
     permission_classes = [AllowAny]
@@ -357,10 +314,7 @@ class AppleLoginView(APIView):
             id_token = request.data.get("id_token")
             
             if not access_token and not id_token:
-                return Response(
-                    {"detail": "Token required"}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+                return Response({"detail": "Token required"}, status=status.HTTP_400_BAD_REQUEST)
                 
             adapter = AppleOAuth2Adapter(request)
             app = adapter.get_provider().get_app(request)
@@ -371,19 +325,18 @@ class AppleLoginView(APIView):
             )
             
             token_payload = {}
-            if access_token: 
-                token_payload["code"] = access_token
-            if id_token: 
-                token_payload["id_token"] = id_token
+            if access_token: token_payload["code"] = access_token
+            if id_token: token_payload["id_token"] = id_token
                 
             social_token = client.parse_token(token_payload)
             social_token.app = app
             login = adapter.complete_login(request, app, social_token)
             login.state = {} 
             login.save(request)
+
+            send_push_notification(login.user, "New Login", "Logged in via Apple.")
             
             tokens = login.user.tokens
-            
             return Response({
                 "message": "Login successful",
                 "token": tokens['access'],
@@ -393,7 +346,4 @@ class AppleLoginView(APIView):
             
         except Exception as e:
             logger.error(f"Apple Login Failed: {str(e)}", exc_info=True)
-            return Response(
-                {"detail": "Apple authentication failed"}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({"detail": "Apple authentication failed"}, status=status.HTTP_400_BAD_REQUEST)

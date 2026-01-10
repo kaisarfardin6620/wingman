@@ -10,6 +10,7 @@ from django.db import transaction
 from openai import OpenAI, OpenAIError
 from .models import ChatSession, Message, DetectedEvent
 from core.models import UserSettings
+from core.utils import send_push_notification
 
 client = OpenAI(api_key=settings.OPENAI_API_KEY)
 logger = logging.getLogger(__name__)
@@ -41,32 +42,20 @@ def send_ws_message(session_id, data):
     autoretry_for=(OpenAIError,),
     retry_backoff=True
 )
-def generate_ai_response(self, session_id, user_text):
+def generate_ai_response(self, session_id, user_text, selected_tone=None):
     try:
-        session = ChatSession.objects.select_related(
-            'user', 'target_profile'
-        ).get(id=session_id)
+        session = ChatSession.objects.select_related('user', 'target_profile').get(id=session_id)
         
         rate_limit_key = f"ai_response_rate:{session.user.id}"
         request_count = cache.get(rate_limit_key, 0)
         
         if not session.user.is_premium and request_count >= 10:
-            send_ws_message(session.conversation_id, {
-                'id': None,
-                'text': "You're sending messages too quickly. Please wait a moment.",
-                'is_ai': True,
-                'type': 'rate_limit'
-            })
+            send_ws_message(session.conversation_id, {'id': None, 'text': "Too fast.", 'is_ai': True, 'type': 'rate_limit'})
             return
         
         cache.set(rate_limit_key, request_count + 1, 60)
         
-        user_settings = UserSettings.objects.select_related(
-            'active_persona'
-        ).prefetch_related(
-            'active_tones'
-        ).filter(user=session.user).first()
-        
+        user_settings = UserSettings.objects.select_related('active_persona').prefetch_related('active_tones').filter(user=session.user).first()
         if not user_settings:
             user_settings, _ = UserSettings.objects.get_or_create(user=session.user)
         
@@ -77,41 +66,30 @@ def generate_ai_response(self, session_id, user_text):
 
         user_style_prompt = ""
         if user_settings.linguistic_style:
-            user_style_prompt = f"\nUSER STYLE FINGERPRINT: {user_settings.linguistic_style}"
+            user_style_prompt = f"\nUSER STYLE: {user_settings.linguistic_style}"
 
-        active_tones = list(user_settings.active_tones.values_list('name', flat=True))
-        if active_tones:
-            tone_prompt = f"Respond using these tones: {', '.join(active_tones)}."
+        if selected_tone:
+             tone_prompt = f"Respond in a {selected_tone} tone."
         else:
-            tone_prompt = "Keep the tone confident and supportive."
+            active_tones = list(user_settings.active_tones.values_list('name', flat=True))
+            if active_tones:
+                tone_prompt = f"Respond using these tones: {', '.join(active_tones)}."
+            else:
+                tone_prompt = "Keep the tone confident."
 
         target_prompt = ""
         if session.target_profile:
             tp = session.target_profile
-            target_prompt = (
-                f"CONTEXT: User is asking about '{tp.name}'.\n"
-                f"She likes: {tp.what_she_likes or 'Unknown'}\n"
-                f"Notes: {tp.details or ''} {tp.her_mentions or ''}"
-            )
+            target_prompt = f"CONTEXT: User is asking about '{tp.name}'. Likes: {tp.what_she_likes}. Notes: {tp.details}"
 
-        system_prompt = (
-            f"{persona_prompt}\n"
-            f"{user_style_prompt}\n"
-            f"{tone_prompt}\n"
-            f"{target_prompt}\n"
-            "Help the user with dating advice. If drafting texts, use their style."
-        )
+        system_prompt = f"{persona_prompt}\n{user_style_prompt}\n{tone_prompt}\n{target_prompt}\nHelp with dating advice."
 
-        recent_messages = session.messages.only(
-            'is_ai', 'text', 'ocr_extracted_text'
-        ).order_by('-created_at')[:MAX_HISTORY_MESSAGES]
-        
+        recent_messages = session.messages.only('is_ai', 'text', 'ocr_extracted_text').order_by('-created_at')[:MAX_HISTORY_MESSAGES]
         history = []
         for msg in reversed(list(recent_messages)):
             role = "assistant" if msg.is_ai else "user"
             content = msg.text or ""
-            if msg.ocr_extracted_text:
-                content += f"\n[IMAGE CONTEXT: {msg.ocr_extracted_text}]"
+            if msg.ocr_extracted_text: content += f"\n[IMAGE: {msg.ocr_extracted_text}]"
             history.append({"role": role, "content": content})
 
         messages_payload = [{"role": "system", "content": system_prompt}] + history
@@ -128,23 +106,18 @@ def generate_ai_response(self, session_id, user_text):
         tokens_used = response.usage.total_tokens if hasattr(response, 'usage') else 0
         
         with transaction.atomic():
-            ai_msg = Message.objects.create(
-                session=session,
-                is_ai=True,
-                text=ai_reply,
-                tokens_used=tokens_used
-            )
-            
+            ai_msg = Message.objects.create(session=session, is_ai=True, text=ai_reply, tokens_used=tokens_used)
             session.update_preview()
         
-        send_ws_message(session.conversation_id, {
-            'id': ai_msg.id,
-            'text': ai_msg.text,
-            'is_ai': True,
-            'created_at': str(ai_msg.created_at)
-        })
-        
+        send_ws_message(session.conversation_id, {'id': ai_msg.id, 'text': ai_msg.text, 'is_ai': True, 'created_at': str(ai_msg.created_at)})
         cache.delete(f"chat_history:{session.conversation_id}")
+        
+        send_push_notification(
+            session.user, 
+            "AI Wingman Replied", 
+            ai_reply[:100] + "...", 
+            data={"conversation_id": str(session.conversation_id)}
+        )
         
         time_keywords = ['tomorrow', 'tonight', 'meet', 'date', 'clock', 'pm', 'am', 'schedule']
         if any(word in user_text.lower() for word in time_keywords):
@@ -160,275 +133,90 @@ def generate_ai_response(self, session_id, user_text):
         return ai_msg.id
 
     except OpenAIError as e:
-        logger.error(f"OpenAI API Error (session {session_id}): {e}")
-        send_ws_message(session.conversation_id, {
-            'id': None,
-            'text': "I'm experiencing technical difficulties. Please try again in a moment.",
-            'is_ai': True,
-            'type': 'error'
-        })
+        logger.error(f"OpenAI API Error: {e}")
+        send_ws_message(session.conversation_id, {'id': None, 'text': "Error.", 'is_ai': True, 'type': 'error'})
         raise self.retry(exc=e)
-    
     except Exception as e:
-        logger.error(f"AI Generation Error (session {session_id}): {e}", exc_info=True)
-        send_ws_message(session.conversation_id, {
-            'id': None,
-            'text': "Sorry, something went wrong. Please try again.",
-            'is_ai': True,
-            'type': 'error'
-        })
+        logger.error(f"AI Error: {e}")
+        send_ws_message(session.conversation_id, {'id': None, 'text': "Error.", 'is_ai': True, 'type': 'error'})
 
-@shared_task(
-    bind=True,
-    max_retries=2,
-    autoretry_for=(OpenAIError,)
-)
+@shared_task(bind=True, max_retries=2, autoretry_for=(OpenAIError,))
 def analyze_screenshot_task(self, message_id):
     try:
         message = Message.objects.select_related('session').get(id=message_id)
-        
-        if not message.image:
-            return
-        
+        if not message.image: return
         try:
             with message.image.open('rb') as image_file:
                 base64_image = base64.b64encode(image_file.read()).decode('utf-8')
-        except Exception as e:
-            logger.error(f"Failed to read image file for message {message_id}: {e}")
-            return
+        except Exception as e: return
 
         response = client.chat.completions.create(
             model="gpt-4o",
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "Extract all visible text from this image. Return JSON format: {\"extracted_text\": \"...\"}"
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64_image}",
-                                "detail": "high"
-                            }
-                        },
-                    ],
-                }
-            ],
+            messages=[{"role": "user", "content": [{"type": "text", "text": "Extract text JSON"}, {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}]}] ,
             max_tokens=1000,
-            timeout=OPENAI_TIMEOUT,
             response_format={"type": "json_object"}
         )
-
         ai_content = json.loads(response.choices[0].message.content)
         ocr_text = ai_content.get('extracted_text', '')
-        
         message.ocr_extracted_text = ocr_text
         message.save(update_fields=['ocr_extracted_text'])
-        
         cache.delete(f"chat_history:{message.session.conversation_id}")
+        send_ws_message(message.session.conversation_id, {'id': message.id, 'type': 'analysis_complete', 'ocr_text': ocr_text})
         
-        send_ws_message(message.session.conversation_id, {
-            'id': message.id,
-            'type': 'analysis_complete',
-            'ocr_text': ocr_text
-        })
-        
-    except OpenAIError as e:
-        logger.error(f"OpenAI OCR Error (message {message_id}): {e}")
-        raise self.retry(exc=e)
-    
-    except Exception as e:
-        logger.error(f"Screenshot Analysis Error (message {message_id}): {e}", exc_info=True)
+    except Exception as e: logger.error(f"OCR Error: {e}")
 
-@shared_task(
-    bind=True,
-    max_retries=2,
-    autoretry_for=(OpenAIError,)
-)
+@shared_task(bind=True, max_retries=2, autoretry_for=(OpenAIError,))
 def profile_target_engine(self, session_id, latest_text):
     try:
         session = ChatSession.objects.select_related('target_profile').get(id=session_id)
-        
-        if not session.target_profile:
-            return
-        
+        if not session.target_profile: return
         tp = session.target_profile
-        
-        prompt = (
-            f"Analyze this message about '{tp.name}'. Extract NEW likes/preferences not already mentioned.\n"
-            f"Current Likes: {tp.what_she_likes or 'None'}\n"
-            f"User Message: \"{latest_text}\"\n"
-            "Return JSON only: {\"new_likes\": [\"item1\", \"item2\"], \"new_preferences\": [\"pref1\"]}"
-        )
-
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=MAX_TOKENS_MINI,
-            timeout=OPENAI_TIMEOUT,
-            response_format={"type": "json_object"}
-        )
-        
+        prompt = f"Analyze about {tp.name}. New likes from: {latest_text}. Return JSON {{new_likes:[], new_preferences:[]}}"
+        response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"})
         data = json.loads(response.choices[0].message.content)
-        
         updated = False
-        
-        if data.get('new_likes') and isinstance(data['new_likes'], list):
+        if data.get('new_likes'):
             for item in data['new_likes']:
-                if item and item not in (tp.what_she_likes or []):
-                    if not tp.what_she_likes:
-                        tp.what_she_likes = []
-                    tp.what_she_likes.append(item)
-                    updated = True
-        
-        if data.get('new_preferences') and isinstance(data['new_preferences'], list):
+                if item not in tp.what_she_likes:
+                    tp.what_she_likes.append(item); updated = True
+        if data.get('new_preferences'):
             for item in data['new_preferences']:
-                if item and item not in (tp.preferences or []):
-                    if not tp.preferences:
-                        tp.preferences = []
-                    tp.preferences.append(item)
-                    updated = True
+                if item not in tp.preferences:
+                    tp.preferences.append(item); updated = True
+        if updated: tp.save()
+    except Exception as e: logger.error(f"Profile Error: {e}")
 
-        if updated:
-            tp.save(update_fields=['what_she_likes', 'preferences'])
-
-    except OpenAIError as e:
-        logger.error(f"OpenAI Profiling Error (session {session_id}): {e}")
-        raise self.retry(exc=e)
-    
-    except Exception as e:
-        logger.error(f"Profile Engine Error (session {session_id}): {e}", exc_info=True)
-
-@shared_task(
-    bind=True,
-    max_retries=2,
-    autoretry_for=(OpenAIError,)
-)
+@shared_task(bind=True, max_retries=2, autoretry_for=(OpenAIError,))
 def linguistic_engine(self, user_id, session_id):
     try:
         user_settings, _ = UserSettings.objects.get_or_create(user_id=user_id)
-        user_msgs = Message.objects.filter(
-            sender_id=user_id,
-            is_ai=False
-        ).only('text').order_by('-created_at')[:10]
-        
-        if not user_msgs:
-            return
-        
+        user_msgs = Message.objects.filter(sender_id=user_id, is_ai=False).only('text').order_by('-created_at')[:10]
         text_sample = "\n".join([m.text for m in user_msgs if m.text])
-        
-        if not text_sample:
-            return
+        if not text_sample: return
+        prompt = f"Analyze style concisely (under 100 words): {text_sample[:1000]}"
+        response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}], max_tokens=150)
+        user_settings.linguistic_style = response.choices[0].message.content.strip()
+        user_settings.save()
+    except Exception as e: logger.error(f"Linguistic Error: {e}")
 
-        prompt = (
-            "Analyze this person's texting style. Describe concisely:\n"
-            "- Sentence length (short/long)\n"
-            "- Capitalization patterns\n"
-            "- Emoji usage\n"
-            "- Tone (casual/formal/flirty)\n"
-            "- Slang or unique phrases\n"
-            "Keep response under 100 words.\n\n"
-            f"Messages:\n{text_sample[:1000]}"
-        )
-
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=150,
-            timeout=OPENAI_TIMEOUT,
-            temperature=0.3
-        )
-        
-        style_desc = response.choices[0].message.content.strip()
-        user_settings.linguistic_style = style_desc
-        user_settings.save(update_fields=['linguistic_style'])
-
-    except OpenAIError as e:
-        logger.error(f"OpenAI Linguistic Error (user {user_id}): {e}")
-        raise self.retry(exc=e)
-    
-    except Exception as e:
-        logger.error(f"Linguistic Engine Error (user {user_id}): {e}", exc_info=True)
-
-@shared_task(
-    bind=True,
-    max_retries=2,
-    autoretry_for=(OpenAIError,)
-)
+@shared_task(bind=True, max_retries=2, autoretry_for=(OpenAIError,))
 def intent_engine(self, session_id, user_text):
     try:
         session = ChatSession.objects.get(id=session_id)
-        
-        prompt = (
-            "Does this message contain a concrete plan, meeting, or date?\n"
-            f"Message: \"{user_text}\"\n"
-            "Return JSON: {\"is_event\": true/false, \"title\": \"string\", \"start_time\": \"string\", \"description\": \"string\"}"
-        )
-
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=200,
-            timeout=OPENAI_TIMEOUT,
-            response_format={"type": "json_object"}
-        )
-        
+        prompt = f"Is this a plan? \"{user_text}\" Return JSON {{is_event:bool, title, start_time, description}}"
+        response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"})
         data = json.loads(response.choices[0].message.content)
-        
         if data.get('is_event'):
-            DetectedEvent.objects.create(
-                session=session,
-                title=data.get('title', 'New Event')[:255],
-                description=data.get('description', '')[:500],
-                start_time=data.get('start_time', '')[:100]
-            )
+            DetectedEvent.objects.create(session=session, title=data.get('title', 'Event')[:255], description=data.get('description', '')[:500], start_time=data.get('start_time', '')[:100])
+            send_push_notification(session.user, "Event Detected", f"Added {data.get('title')} to plan.")
+    except Exception as e: logger.error(f"Intent Error: {e}")
 
-    except OpenAIError as e:
-        logger.error(f"OpenAI Intent Error (session {session_id}): {e}")
-        raise self.retry(exc=e)
-    
-    except Exception as e:
-        logger.error(f"Intent Engine Error (session {session_id}): {e}", exc_info=True)
-
-@shared_task(
-    bind=True,
-    max_retries=2,
-    autoretry_for=(OpenAIError,)
-)
+@shared_task(bind=True, max_retries=2, autoretry_for=(OpenAIError,))
 def generate_chat_title(self, session_id, first_message):
     try:
         session = ChatSession.objects.get(id=session_id)
-        
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "Generate a 3-5 word chat title. No quotes. Be concise and descriptive."
-                },
-                {
-                    "role": "user",
-                    "content": first_message[:200]
-                }
-            ],
-            max_tokens=20,
-            timeout=10,
-            temperature=0.7
-        )
-        
-        title = response.choices[0].message.content.strip().replace('"', '').replace("'", "")
-        
-        if len(title) > 255:
-            title = title[:252] + "..."
-        
-        session.title = title
+        response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "system", "content": "3-5 word title"}, {"role": "user", "content": first_message[:200]}], max_tokens=20)
+        title = response.choices[0].message.content.strip().replace('"', '')
+        session.title = title[:252]
         session.save(update_fields=['title'])
-        
-    except OpenAIError as e:
-        logger.warning(f"OpenAI Title Error (session {session_id}): {e}")
-    
-    except Exception as e:
-        logger.error(f"Title Generation Error (session {session_id}): {e}")
+    except Exception as e: pass
