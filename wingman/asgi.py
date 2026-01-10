@@ -9,13 +9,13 @@ from channels.routing import ProtocolTypeRouter, URLRouter
 from wingman.middleware import JwtAuthMiddleware
 import chat.routing
 
-websocket_urlpatterns = chat.routing.websocket_urlpatterns
+django_asgi_app = get_asgi_application()
 
 application = ProtocolTypeRouter({
-    "http": get_asgi_application(),
+    "http": django_asgi_app,
     "websocket": JwtAuthMiddleware(
         URLRouter(
-            websocket_urlpatterns
+            chat.routing.websocket_urlpatterns
         )
     ),
 })

@@ -26,3 +26,20 @@ class ChatSessionListSerializer(serializers.ModelSerializer):
         if last_msg:
             return last_msg.text[:50] + "..." if last_msg.text else "[Image]"
         return ""
+
+class ChatSessionDetailSerializer(serializers.ModelSerializer):
+    target_profile = TargetProfileSerializer(read_only=True)
+    events = DetectedEventSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = ChatSession
+        fields = ['conversation_id', 'title', 'target_profile', 'events', 'created_at', 'updated_at']
+
+class ChatSessionUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ChatSession
+        fields = ['title']
+
+class MessageUploadSerializer(serializers.Serializer):
+    image = serializers.ImageField()
+    text = serializers.CharField(required=False, allow_blank=True)

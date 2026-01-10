@@ -2,9 +2,8 @@ import secrets
 import logging
 from django.utils import timezone
 from datetime import timedelta
-from django.core.mail import send_mail
-from django.conf import settings
 from .models import User, OneTimePassword
+from .tasks import send_otp_email_task
 
 logger = logging.getLogger(__name__)
 
@@ -19,24 +18,19 @@ def send_otp_via_email(email):
             user=user,
             defaults={
                 'otp': otp_code,
+                'created_at': timezone.now()
             }
         )
         
-        send_mail(
-            subject="Your Verification Code",
-            message=f"Your OTP code is {otp_code}. It expires in 5 minutes.",
-            from_email=settings.EMAIL_HOST_USER,
-            recipient_list=[email],
-            fail_silently=False,
-        )
+        send_otp_email_task.delay(email, otp_code)
         
-        return True
+        return True, "OTP sent successfully"
     except User.DoesNotExist:
         logger.warning(f"Attempted to send OTP to non-existent user: {email}")
-        return False
+        return False, "User not found"
     except Exception as e:
         logger.error(f"Error in send_otp_via_email: {str(e)}")
-        return False
+        return False, "Failed to generate OTP"
 
 def verify_otp_via_email(email, otp_input):
     try:
@@ -45,13 +39,12 @@ def verify_otp_via_email(email, otp_input):
         
         expiry_time = otp_record.created_at + timedelta(minutes=5)
         if timezone.now() > expiry_time:
-            logger.info(f"Expired OTP attempt for {email}")
-            return False
+            return False, "OTP expired"
 
         if otp_record.otp == otp_input:
             otp_record.delete()
-            return True
+            return True, "Verification successful"
             
-        return False
+        return False, "Invalid OTP"
     except (User.DoesNotExist, OneTimePassword.DoesNotExist):
-        return False
+        return False, "Invalid request"
