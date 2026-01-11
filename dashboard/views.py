@@ -97,12 +97,29 @@ class AdminUserViewSet(viewsets.ModelViewSet):
     
     @action(detail=True, methods=['post'])
     def reset_user_password(self, request, pk=None):
+        import secrets
+        from django.core.mail import send_mail
+        from django.conf import settings
+
         user = self.get_object()
-        new_pass = "Wingman@123" 
+        
+        new_pass = secrets.token_urlsafe(10) 
         user.set_password(new_pass)
         user.save()
-        send_push_notification(user, "Security Alert", "Admin reset your password.")
-        return Response({"message": f"Password reset to {new_pass}"})
+        
+        try:
+            send_mail(
+                subject="Your Password has been Reset by Admin",
+                message=f"Hello {user.name or 'User'},\n\nYour Admin has reset your password.\n\nTemporary Password: {new_pass}\n\nPlease log in and change this immediately.",
+                from_email=settings.EMAIL_HOST_USER,
+                recipient_list=[user.email],
+                fail_silently=False,
+            )
+        except Exception as e:
+            return Response({"error": f"Password reset, but failed to email user: {str(e)}"}, status=500)
+        send_push_notification(user, "Security Alert", "Admin reset your password. Check your email.")
+        
+        return Response({"message": f"Password reset. Email sent to {user.email}"})
 
 class AdminToneViewSet(viewsets.ModelViewSet):
     queryset = Tone.objects.all().order_by('name')

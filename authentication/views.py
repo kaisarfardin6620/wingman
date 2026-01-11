@@ -142,7 +142,8 @@ class LogoutView(APIView):
                 refresh_token = serializer.validated_data['refresh']
                 token = RefreshToken(refresh_token)
                 token.blacklist()
-                fcm_token = request.data.get('fcm_token')
+                
+                fcm_token = serializer.validated_data.get('fcm_token')
                 if fcm_token:
                     request.user.fcm_devices.filter(token=fcm_token).delete()
                 
