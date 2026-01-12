@@ -157,13 +157,19 @@ class ChatConsumer(AsyncWebsocketConsumer):
         if not config:
             config = GlobalConfig.load()
             cache.set(cache_key, config, 3600)
+        
         if len(text) > config.max_chat_length:
             return f"Message too long. Free limit is {config.max_chat_length} characters."
+        
         today = timezone.now().date()
         count_cache_key = f"msg_count:{self.user.id}:{today}"
-        added = cache.add(count_cache_key, 1, timeout=86400)
-        if added: current_count = 1
-        else: current_count = cache.incr(count_cache_key)
+        
+        try:
+            current_count = cache.incr(count_cache_key)
+        except ValueError:
+            cache.set(count_cache_key, 1, timeout=86400)
+            current_count = 1
+            
         if current_count > config.daily_free_limit:
             return "Daily free limit reached. Upgrade to Premium."
         return None

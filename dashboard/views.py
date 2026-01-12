@@ -1,4 +1,5 @@
 from django.utils import timezone
+from django.db import transaction
 from django.db.models.functions import TruncMonth
 from django.db.models import Count, Q
 from django.contrib.auth import get_user_model
@@ -102,23 +103,24 @@ class AdminUserViewSet(viewsets.ModelViewSet):
         from django.conf import settings
 
         user = self.get_object()
-        
         new_pass = secrets.token_urlsafe(10) 
-        user.set_password(new_pass)
-        user.save()
         
         try:
-            send_mail(
-                subject="Your Password has been Reset by Admin",
-                message=f"Hello {user.name or 'User'},\n\nYour Admin has reset your password.\n\nTemporary Password: {new_pass}\n\nPlease log in and change this immediately.",
-                from_email=settings.EMAIL_HOST_USER,
-                recipient_list=[user.email],
-                fail_silently=False,
-            )
+            with transaction.atomic():
+                user.set_password(new_pass)
+                user.save(update_fields=['password'])
+                
+                send_mail(
+                    subject="Your Password has been Reset by Admin",
+                    message=f"Hello {user.name or 'User'},\n\nYour Admin has reset your password.\n\nTemporary Password: {new_pass}\n\nPlease log in and change this immediately.",
+                    from_email=settings.EMAIL_HOST_USER,
+                    recipient_list=[user.email],
+                    fail_silently=False,
+                )
         except Exception as e:
-            return Response({"error": f"Password reset, but failed to email user: {str(e)}"}, status=500)
-        send_push_notification(user, "Security Alert", "Admin reset your password. Check your email.")
+            return Response({"error": f"Failed to reset password: {str(e)}"}, status=500)
         
+        send_push_notification(user, "Security Alert", "Admin reset your password. Check your email.")
         return Response({"message": f"Password reset. Email sent to {user.email}"})
 
 class AdminToneViewSet(viewsets.ModelViewSet):

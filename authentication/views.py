@@ -74,9 +74,6 @@ class VerifyOTPView(APIView):
                     
                     return Response({
                         "message": "Verification successful",
-                        "token": tokens['access'],
-                        "refresh_token": tokens['refresh'],
-                        "user": UserProfileSerializer(user, context={'request': request}).data
                     }, status=status.HTTP_200_OK)
                     
                 except User.DoesNotExist:
