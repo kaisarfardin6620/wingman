@@ -59,6 +59,13 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None):
         if not user_settings:
             user_settings, _ = UserSettings.objects.get_or_create(user=session.user)
         
+        lang_code = user_settings.language
+        lang_name = dict(settings.LANGUAGES).get(lang_code, 'English')
+        
+        lang_instruction = f"Respond in {lang_name}."
+        if lang_code == 'hi':
+            lang_instruction = "Respond in Hinglish (Hindi written in English script) mixed with English where natural."
+
         if user_settings.active_persona:
             persona_prompt = f"You are {user_settings.active_persona.name}. {user_settings.active_persona.description}"
         else:
@@ -82,7 +89,7 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None):
             tp = session.target_profile
             target_prompt = f"CONTEXT: User is asking about '{tp.name}'. Likes: {tp.what_she_likes}. Notes: {tp.details}"
 
-        system_prompt = f"{persona_prompt}\n{user_style_prompt}\n{tone_prompt}\n{target_prompt}\nHelp with dating advice."
+        system_prompt = f"{persona_prompt}\n{user_style_prompt}\n{tone_prompt}\n{lang_instruction}\n{target_prompt}\nHelp with dating advice."
 
         recent_messages = session.messages.only('is_ai', 'text', 'ocr_extracted_text').order_by('-created_at')[:MAX_HISTORY_MESSAGES]
         history = []

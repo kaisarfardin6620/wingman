@@ -1,0 +1,84 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: Wingman\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2024-01-01 00:00+0000\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+
+#: wingman/settings.py:307
+msgid "English"
+msgstr "Anglais"
+
+#: wingman/settings.py:308
+msgid "Spanish"
+msgstr "Espagnol"
+
+#: wingman/settings.py:309
+msgid "Portuguese"
+msgstr "Portugais"
+
+#: wingman/settings.py:310
+msgid "French"
+msgstr "Français"
+
+#: wingman/settings.py:311
+msgid "German"
+msgstr "Allemand"
+
+#: wingman/settings.py:312
+msgid "Italian"
+msgstr "Italien"
+
+#: wingman/settings.py:313
+msgid "Arabic"
+msgstr "Arabe"
+
+#: wingman/settings.py:314
+msgid "Japanese"
+msgstr "Japonais"
+
+#: wingman/settings.py:315
+msgid "Korean"
+msgstr "Coréen"
+
+#: wingman/settings.py:316
+msgid "Hindi"
+msgstr "Hindi"
+
+#: authentication/models.py:12
+msgid "Email Address"
+msgstr "Adresse e-mail"
+
+#: authentication/models.py:13
+msgid "Full Name"
+msgstr "Nom complet"
+
+#: authentication/models.py:20
+msgid "User"
+msgstr "Utilisateur"
+
+#: authentication/models.py:21
+msgid "Users"
+msgstr "Utilisateurs"
+
+#: authentication/models.py:44
+msgid "One Time Password"
+msgstr "Mot de passe à usage unique"
+
+#: authentication/models.py:45
+msgid "One Time Passwords"
+msgstr "Mots de passe à usage unique"
+
+#: authentication/managers.py:9
+msgid "You must provide a valid email address"
+msgstr "Vous devez fournir une adresse e-mail valide"
+
+#: authentication/managers.py:13
+msgid "Users must have an email address"
+msgstr "Les utilisateurs doivent avoir une adresse e-mail"
