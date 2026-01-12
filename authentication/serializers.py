@@ -168,7 +168,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['id', 'email', 'name', 'profile_image', 'profile_image_url', 'is_premium', 'date_joined']
-        read_only_fields = ['id', 'email', 'is_premium', 'date_joined']
+        read_only_fields = ['id', 'is_premium', 'date_joined']
         
     def get_profile_image_url(self, obj):
         request = self.context.get('request')
@@ -178,6 +178,15 @@ class UserProfileSerializer(serializers.ModelSerializer):
             return obj.profile_image.url
         return None
     
+    def validate_email(self, value):
+        user = self.context['request'].user
+        email = value.lower().strip()
+        
+        if User.objects.exclude(pk=user.pk).filter(email__iexact=email).exists():
+            raise serializers.ValidationError("This email is already associated with another account.")
+            
+        return email
+
     def validate_name(self, value):
         if value:
             value = value.strip()
@@ -237,4 +246,4 @@ class UserChangePasswordSerializer(serializers.Serializer):
             validate_password(attrs['new_password'])
         except Exception as e:
             raise serializers.ValidationError({"new_password": list(e.messages)})
-        return attrs        
+        return attrs

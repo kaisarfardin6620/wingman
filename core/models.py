@@ -76,7 +76,11 @@ class UserSettings(models.Model):
         related_name='settings',
         db_index=True
     )
-    language = models.CharField(max_length=50, default='English')
+    language = models.CharField(
+        max_length=10, 
+        choices=settings.LANGUAGES, 
+        default='en'
+    )
     active_persona = models.ForeignKey(
         Persona,
         on_delete=models.SET_NULL,

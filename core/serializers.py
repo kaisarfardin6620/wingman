@@ -26,7 +26,7 @@ class UserSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserSettings
         fields = [
-            'gold_theme', 'premium_logo', 
+            'language', 'gold_theme', 'premium_logo', 
             'passcode_lock_enabled', 'passcode',
             'hide_notifications',
             'selected_tones_details', 'active_tones_ids',
