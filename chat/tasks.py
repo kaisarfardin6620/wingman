@@ -12,7 +12,6 @@ from .models import ChatSession, Message, DetectedEvent
 from core.models import UserSettings
 from core.utils import send_push_notification
 
-client = OpenAI(api_key=settings.OPENAI_API_KEY)
 logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
@@ -43,6 +42,7 @@ def send_ws_message(session_id, data):
     retry_backoff=True
 )
 def generate_ai_response(self, session_id, user_text, selected_tone=None):
+    client = OpenAI(api_key=settings.OPENAI_API_KEY)
     try:
         session = ChatSession.objects.select_related('user', 'target_profile').get(id=session_id)
         
@@ -142,6 +142,7 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None):
 
 @shared_task(bind=True, max_retries=2, autoretry_for=(OpenAIError,))
 def analyze_screenshot_task(self, message_id):
+    client = OpenAI(api_key=settings.OPENAI_API_KEY)
     try:
         message = Message.objects.select_related('session').get(id=message_id)
         if not message.image: return
@@ -167,6 +168,7 @@ def analyze_screenshot_task(self, message_id):
 
 @shared_task(bind=True, max_retries=2, autoretry_for=(OpenAIError,))
 def profile_target_engine(self, session_id, latest_text):
+    client = OpenAI(api_key=settings.OPENAI_API_KEY)
     try:
         session = ChatSession.objects.select_related('target_profile').get(id=session_id)
         if not session.target_profile: return
@@ -188,6 +190,7 @@ def profile_target_engine(self, session_id, latest_text):
 
 @shared_task(bind=True, max_retries=2, autoretry_for=(OpenAIError,))
 def linguistic_engine(self, user_id, session_id):
+    client = OpenAI(api_key=settings.OPENAI_API_KEY)
     try:
         user_settings, _ = UserSettings.objects.get_or_create(user_id=user_id)
         user_msgs = Message.objects.filter(sender_id=user_id, is_ai=False).only('text').order_by('-created_at')[:10]
@@ -201,6 +204,7 @@ def linguistic_engine(self, user_id, session_id):
 
 @shared_task(bind=True, max_retries=2, autoretry_for=(OpenAIError,))
 def intent_engine(self, session_id, user_text):
+    client = OpenAI(api_key=settings.OPENAI_API_KEY)
     try:
         session = ChatSession.objects.get(id=session_id)
         prompt = f"Is this a plan? \"{user_text}\" Return JSON {{is_event:bool, title, start_time, description}}"
@@ -213,6 +217,7 @@ def intent_engine(self, session_id, user_text):
 
 @shared_task(bind=True, max_retries=2, autoretry_for=(OpenAIError,))
 def generate_chat_title(self, session_id, first_message):
+    client = OpenAI(api_key=settings.OPENAI_API_KEY)
     try:
         session = ChatSession.objects.get(id=session_id)
         response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "system", "content": "3-5 word title"}, {"role": "user", "content": first_message[:200]}], max_tokens=20)

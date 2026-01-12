@@ -1,6 +1,7 @@
 import secrets
 import logging
 from django.utils import timezone
+from django.db import transaction
 from datetime import timedelta
 from .models import User, OneTimePassword
 from .tasks import send_otp_email_task
@@ -21,7 +22,7 @@ def send_otp_via_email(email):
                 'created_at': timezone.now()
             }
         )
-        send_otp_email_task.delay(email, otp_code)
+        transaction.on_commit(lambda: send_otp_email_task.delay(email, otp_code))
         return True, "OTP sent successfully"
     except User.DoesNotExist:
         return False, "User not found"
