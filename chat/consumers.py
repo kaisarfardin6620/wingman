@@ -14,8 +14,10 @@ logger = logging.getLogger(__name__)
 
 class ChatConsumer(AsyncWebsocketConsumer):
     async def connect(self):
-        self.user = self.scope["user"]
-        if self.user.is_anonymous:
+        self.user = self.scope.get("user")
+        
+        if not self.user or self.user.is_anonymous:
+            await self.accept()
             await self.close(code=4001)
             return
         
@@ -36,6 +38,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     'messages': history
                 }))
             else:
+                await self.accept()
                 await self.close(code=4004)
         else:
             await self.accept()
@@ -53,7 +56,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
         message_text = data.get('message', '').strip()
         target_id = data.get('target_id')
         incoming_conversation_id = data.get('conversation_id')
-        
         selected_tone = data.get('tone', None)
 
         if not message_text:

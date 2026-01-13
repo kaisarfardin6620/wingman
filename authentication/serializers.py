@@ -38,7 +38,11 @@ class SignupSerializer(serializers.ModelSerializer):
         email = value.lower().strip()
         if User.objects.filter(email__iexact=email).exists():
             raise serializers.ValidationError("A user with this email already exists.")
-        disposable_domains = ['tempmail.com', 'guerrillamail.com', '10minutemail.com']
+        
+        disposable_domains = [
+            'tempmail.com', 'guerrillamail.com', '10minutemail.com', 
+            'mailinator.com', 'yopmail.com', 'throwawaymail.com'
+        ]
         domain = email.split('@')[-1]
         if domain in disposable_domains:
             raise serializers.ValidationError("Disposable email addresses are not allowed.")

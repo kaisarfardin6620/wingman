@@ -9,7 +9,7 @@ from django.core.cache import cache
 from django.db import transaction
 from openai import OpenAI, OpenAIError
 from .models import ChatSession, Message, DetectedEvent
-from core.models import UserSettings
+from core.models import UserSettings, TargetProfile
 from core.utils import send_push_notification
 
 logger = logging.getLogger(__name__)
@@ -48,23 +48,21 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None):
         
         rate_limit_key = f"ai_response_rate:{session.user.id}"
         request_count = cache.get(rate_limit_key, 0)
-        
         if not session.user.is_premium and request_count >= 10:
-            send_ws_message(session.conversation_id, {'id': None, 'text': "Too fast.", 'is_ai': True, 'type': 'rate_limit'})
+            send_ws_message(session.conversation_id, {'id': None, 'text': "Too fast. Please wait a moment.", 'is_ai': True, 'type': 'rate_limit'})
             return
-        
         cache.set(rate_limit_key, request_count + 1, 60)
         
         user_settings = UserSettings.objects.select_related('active_persona').prefetch_related('active_tones').filter(user=session.user).first()
         if not user_settings:
             user_settings, _ = UserSettings.objects.get_or_create(user=session.user)
-        
+            
         lang_code = user_settings.language
         lang_name = dict(settings.LANGUAGES).get(lang_code, 'English')
         
         lang_instruction = f"Respond in {lang_name}."
         if lang_code == 'hi':
-            lang_instruction = "Respond in Hinglish (Hindi written in English script) mixed with English where natural."
+            lang_instruction = "Respond in Hinglish mixed with English where natural."
 
         if user_settings.active_persona:
             persona_prompt = f"You are {user_settings.active_persona.name}. {user_settings.active_persona.description}"
@@ -94,8 +92,6 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None):
             "You are a helpful Wingman AI dating coach.\n"
             "IMPORTANT: You must return a valid JSON object.\n"
             "Structure: { 'response_type': 'text' | 'suggestions', 'content': string | array of strings }\n"
-            "If the user asks to write a message, draft a reply, or suggests something, return 'response_type': 'suggestions' and 'content': ['Option 1', 'Option 2', 'Option 3'].\n"
-            "For normal conversation or advice, return 'response_type': 'text' and 'content': 'Your response string'."
         )
 
         recent_messages = session.messages.only('is_ai', 'text', 'ocr_extracted_text').order_by('-created_at')[:MAX_HISTORY_MESSAGES]
@@ -157,11 +153,11 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None):
 
     except OpenAIError as e:
         logger.error(f"OpenAI API Error: {e}")
-        send_ws_message(session.conversation_id, {'id': None, 'text': "Error.", 'is_ai': True, 'type': 'error'})
+        send_ws_message(session.conversation_id, {'id': None, 'text': "AI Error.", 'is_ai': True, 'type': 'error'})
         raise self.retry(exc=e)
     except Exception as e:
-        logger.error(f"AI Error: {e}")
-        send_ws_message(session.conversation_id, {'id': None, 'text': "Error.", 'is_ai': True, 'type': 'error'})
+        logger.error(f"AI Error: {e}", exc_info=True)
+        send_ws_message(session.conversation_id, {'id': None, 'text': "System Error.", 'is_ai': True, 'type': 'error'})
 
 @shared_task(bind=True, max_retries=2, autoretry_for=(OpenAIError,))
 def analyze_screenshot_task(self, message_id):
@@ -193,23 +189,44 @@ def analyze_screenshot_task(self, message_id):
 def profile_target_engine(self, session_id, latest_text):
     client = OpenAI(api_key=settings.OPENAI_API_KEY)
     try:
-        session = ChatSession.objects.select_related('target_profile').get(id=session_id)
-        if not session.target_profile: return
-        tp = session.target_profile
-        prompt = f"Analyze about {tp.name}. New likes from: {latest_text}. Return JSON {{new_likes:[], new_preferences:[]}}"
-        response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"})
-        data = json.loads(response.choices[0].message.content)
-        updated = False
-        if data.get('new_likes'):
-            for item in data['new_likes']:
-                if item not in tp.what_she_likes:
-                    tp.what_she_likes.append(item); updated = True
-        if data.get('new_preferences'):
-            for item in data['new_preferences']:
-                if item not in tp.preferences:
-                    tp.preferences.append(item); updated = True
-        if updated: tp.save()
-    except Exception as e: logger.error(f"Profile Error: {e}")
+        with transaction.atomic():
+            session = ChatSession.objects.select_related('target_profile').select_for_update().get(id=session_id)
+            if not session.target_profile: 
+                return
+            
+            tp = TargetProfile.objects.select_for_update().get(id=session.target_profile.id)
+            
+            prompt = f"Analyze about {tp.name}. New likes from: {latest_text}. Return JSON {{new_likes:[], new_preferences:[]}}"
+            response = client.chat.completions.create(
+                model="gpt-4o-mini", 
+                messages=[{"role": "user", "content": prompt}], 
+                response_format={"type": "json_object"}
+            )
+            
+            data = json.loads(response.choices[0].message.content)
+            updated = False
+            
+            def add_if_new(source_list, new_items):
+                has_change = False
+                for item in new_items:
+                    if item not in source_list:
+                        source_list.append(item)
+                        has_change = True
+                return has_change
+
+            if data.get('new_likes'):
+                if add_if_new(tp.what_she_likes, data['new_likes']):
+                    updated = True
+                    
+            if data.get('new_preferences'):
+                if add_if_new(tp.preferences, data['new_preferences']):
+                    updated = True
+                    
+            if updated:
+                tp.save()
+                
+    except Exception as e: 
+        logger.error(f"Profile Error: {e}")
 
 @shared_task(bind=True, max_retries=2, autoretry_for=(OpenAIError,))
 def linguistic_engine(self, user_id, session_id):

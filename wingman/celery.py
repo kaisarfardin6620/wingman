@@ -1,11 +1,14 @@
 from __future__ import absolute_import, unicode_literals
 import os
 from pathlib import Path
-from dotenv import load_dotenv
 from celery import Celery
+from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(os.path.join(BASE_DIR, '.env'))
+
+env_path = os.path.join(BASE_DIR, '.env')
+if os.path.exists(env_path):
+    load_dotenv(env_path)
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'wingman.settings')
 
