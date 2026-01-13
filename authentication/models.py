@@ -43,7 +43,6 @@ class User(AbstractBaseUser, PermissionsMixin):
             "access": str(refresh.access_token)
         }
 
-
 class OneTimePassword(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='otp')
     otp = models.CharField(max_length=6)
@@ -61,7 +60,6 @@ class OneTimePassword(models.Model):
         return f"{self.user.email} - OTP"
     
     def is_expired(self, minutes=5):
-        """Check if OTP is expired"""
         from django.utils import timezone
         from datetime import timedelta
         expiry_time = self.created_at + timedelta(minutes=minutes)

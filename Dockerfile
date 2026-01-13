@@ -1,29 +1,34 @@
-FROM python:3.13-slim AS base
+FROM python:3.11-slim
 
-FROM base AS builder
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/app/.venv/bin:$PATH"
+
 WORKDIR /app
 
-COPY --link requirements.txt ./
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libpq-dev \
+    netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/*
 
+COPY requirements.txt .
 RUN python -m venv .venv \
     && .venv/bin/pip install --upgrade pip \
-    && .venv/bin/pip install -r requirements.txt
-
-COPY --link . .
-
-FROM base AS final
-WORKDIR /app
+    && .venv/bin/pip install -r requirements.txt \
+    && .venv/bin/pip install gunicorn \
+    && .venv/bin/python -m spacy download en_core_web_sm
 
 RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
 
-COPY --from=builder /app/.venv /app/.venv
-COPY --from=builder /app /app
+COPY . .
 
-ENV PATH="/app/.venv/bin:$PATH"
-ENV PYTHONUNBUFFERED=1
+RUN mkdir -p /app/logs /app/static /app/media \
+    && chown -R appuser:appgroup /app
 
 USER appuser
 
 EXPOSE 8000
 
 ENTRYPOINT ["/app/entrypoint.sh"]
+CMD ["gunicorn", "wingman.wsgi:application", "--bind", "0.0.0.0:8000"]

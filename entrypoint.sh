@@ -1,20 +1,23 @@
 #!/bin/sh
 
-# Exit immediately if a command exits with a non-zero status
 set -e
 
-# Apply database migrations
-python manage.py migrate
+if echo "$DATABASE_BASE_URL" | grep -q "postgres://"; then
+    echo "Waiting for PostgreSQL..."
+    DB_HOST=$(echo $DATABASE_BASE_URL | sed -e 's|^.*@||' -e 's|/.*$||' -e 's|:.*$||')
+    DB_PORT=$(echo $DATABASE_BASE_URL | sed -e 's|^.*@||' -e 's|/.*$||' -e 's|^.*:||')
+    [ -z "$DB_PORT" ] && DB_PORT=5432
+    
+    while ! nc -z $DB_HOST $DB_PORT; do
+      sleep 0.5
+    done
+    echo "PostgreSQL started"
+fi
 
-# Ensure proper permissions for static and media files
-chmod -R 755 /app/static /app/media
+echo "Applying migrations..."
+python manage.py migrate --noinput
 
-# Ensure proper permissions for log files
-mkdir -p /app/logs
-chmod -R 755 /app/logs
+echo "Collecting static files..."
+python manage.py collectstatic --noinput --clear
 
-# Collect static files (if applicable)
-python manage.py collectstatic --noinput
-
-# Start the application
 exec "$@"

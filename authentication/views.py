@@ -14,6 +14,7 @@ from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
 from allauth.socialaccount.providers.oauth2.client import OAuth2Client
 from allauth.socialaccount.providers.apple.views import AppleOAuth2Adapter
 from allauth.socialaccount.providers.apple.client import AppleOAuth2Client
+from allauth.socialaccount.models import SocialLogin
 from core.utils import send_push_notification
 from .serializers import *
 from .models import User
@@ -117,7 +118,6 @@ class LoginView(APIView):
             return Response({"error": "Account not active. OTP sent to email."}, status=status.HTTP_403_FORBIDDEN)
         
         cache.delete(cache_key)
-        
         send_push_notification(user, "New Login", "Your account was just accessed.")
 
         tokens = user.tokens
@@ -284,18 +284,25 @@ class GoogleLoginView(APIView):
             
             social_token = client.parse_token({"access_token": access_token})
             social_token.app = app
-            login = adapter.complete_login(request, app, social_token)
-            login.state = {} 
-            login.save(request)
             
-            send_push_notification(login.user, "New Login", "Logged in via Google.")
+            login = adapter.complete_login(request, app, social_token, response_kwargs={})
+            login.token = social_token
             
-            tokens = login.user.tokens
+            if not isinstance(login, SocialLogin):
+                return Response({"detail": "Error processing login"}, status=status.HTTP_400_BAD_REQUEST)
+
+            login.state = SocialLogin.state_from_request(request)
+            adapter.save_user(request, login, form=None)
+            
+            user = login.user
+            send_push_notification(user, "New Login", "Logged in via Google.")
+            
+            tokens = user.tokens
             return Response({
                 "message": "Login successful",
                 "token": tokens['access'],
                 "refresh_token": tokens['refresh'],
-                "user": UserProfileSerializer(login.user, context={'request': request}).data
+                "user": UserProfileSerializer(user, context={'request': request}).data
             }, status=status.HTTP_200_OK)
             
         except Exception as e:
@@ -328,18 +335,25 @@ class AppleLoginView(APIView):
                 
             social_token = client.parse_token(token_payload)
             social_token.app = app
-            login = adapter.complete_login(request, app, social_token)
-            login.state = {} 
-            login.save(request)
-
-            send_push_notification(login.user, "New Login", "Logged in via Apple.")
             
-            tokens = login.user.tokens
+            login = adapter.complete_login(request, app, social_token, response_kwargs={})
+            login.token = social_token
+            
+            if not isinstance(login, SocialLogin):
+                return Response({"detail": "Error processing login"}, status=status.HTTP_400_BAD_REQUEST)
+
+            login.state = SocialLogin.state_from_request(request)
+            adapter.save_user(request, login, form=None)
+            
+            user = login.user
+            send_push_notification(user, "New Login", "Logged in via Apple.")
+            
+            tokens = user.tokens
             return Response({
                 "message": "Login successful",
                 "token": tokens['access'],
                 "refresh_token": tokens['refresh'],
-                "user": UserProfileSerializer(login.user, context={'request': request}).data
+                "user": UserProfileSerializer(user, context={'request': request}).data
             }, status=status.HTTP_200_OK)
             
         except Exception as e:
