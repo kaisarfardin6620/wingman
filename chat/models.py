@@ -1,4 +1,5 @@
 import uuid
+import json
 from django.db import models
 from django.conf import settings
 from core.models import TargetProfile
@@ -46,7 +47,21 @@ class ChatSession(models.Model):
     def update_preview(self):
         last_msg = self.messages.order_by('-created_at').first()
         if last_msg:
-            self.last_message_preview = (last_msg.text[:97] + "...") if last_msg.text and len(last_msg.text) > 100 else (last_msg.text or "[Image]")
+            preview_text = last_msg.text or "[Image]"
+            
+            if last_msg.is_ai and preview_text.strip().startswith('{'):
+                try:
+                    data = json.loads(preview_text)
+                    if 'content' in data:
+                        content = data['content']
+                        if isinstance(content, list) and content:
+                            preview_text = content[0]
+                        elif isinstance(content, str):
+                            preview_text = content
+                except (json.JSONDecodeError, AttributeError, TypeError):
+                    pass
+
+            self.last_message_preview = (preview_text[:97] + "...") if len(preview_text) > 100 else preview_text
             self.message_count = self.messages.count()
             self.save(update_fields=['last_message_preview', 'message_count', 'updated_at'])
 

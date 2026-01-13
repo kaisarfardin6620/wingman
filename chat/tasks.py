@@ -89,7 +89,14 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None):
             tp = session.target_profile
             target_prompt = f"CONTEXT: User is asking about '{tp.name}'. Likes: {tp.what_she_likes}. Notes: {tp.details}"
 
-        system_prompt = f"{persona_prompt}\n{user_style_prompt}\n{tone_prompt}\n{lang_instruction}\n{target_prompt}\nHelp with dating advice."
+        system_prompt = (
+            f"{persona_prompt}\n{user_style_prompt}\n{tone_prompt}\n{lang_instruction}\n{target_prompt}\n"
+            "You are a helpful Wingman AI dating coach.\n"
+            "IMPORTANT: You must return a valid JSON object.\n"
+            "Structure: { 'response_type': 'text' | 'suggestions', 'content': string | array of strings }\n"
+            "If the user asks to write a message, draft a reply, or suggests something, return 'response_type': 'suggestions' and 'content': ['Option 1', 'Option 2', 'Option 3'].\n"
+            "For normal conversation or advice, return 'response_type': 'text' and 'content': 'Your response string'."
+        )
 
         recent_messages = session.messages.only('is_ai', 'text', 'ocr_extracted_text').order_by('-created_at')[:MAX_HISTORY_MESSAGES]
         history = []
@@ -106,23 +113,32 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None):
             messages=messages_payload,
             max_tokens=MAX_TOKENS_GPT4,
             timeout=OPENAI_TIMEOUT,
-            temperature=0.7
+            temperature=0.7,
+            response_format={"type": "json_object"}
         )
         
-        ai_reply = response.choices[0].message.content
+        ai_reply_json = response.choices[0].message.content
         tokens_used = response.usage.total_tokens if hasattr(response, 'usage') else 0
         
         with transaction.atomic():
-            ai_msg = Message.objects.create(session=session, is_ai=True, text=ai_reply, tokens_used=tokens_used)
+            ai_msg = Message.objects.create(session=session, is_ai=True, text=ai_reply_json, tokens_used=tokens_used)
             session.update_preview()
         
         send_ws_message(session.conversation_id, {'id': ai_msg.id, 'text': ai_msg.text, 'is_ai': True, 'created_at': str(ai_msg.created_at)})
         cache.delete(f"chat_history:{session.conversation_id}")
         
+        try:
+            parsed_reply = json.loads(ai_reply_json)
+            notification_body = parsed_reply.get('content', '')
+            if isinstance(notification_body, list):
+                notification_body = "Here are some suggestions for you."
+        except:
+            notification_body = "New message received"
+
         send_push_notification(
             session.user, 
             "AI Wingman Replied", 
-            ai_reply[:100] + "...", 
+            str(notification_body)[:100] + "...", 
             data={"conversation_id": str(session.conversation_id)}
         )
         
