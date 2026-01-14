@@ -21,6 +21,8 @@ from .serializers import (
     ChangePasswordSerializer
 )
 import logging
+from authentication.utils import generate_otp
+from authentication.tasks import send_otp_email_task
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -163,15 +165,62 @@ class AdminProfileView(APIView):
     throttle_classes = [UserRateThrottle]
 
     def get(self, request):
-        return Response(AdminProfileUpdateSerializer(request.user, context={'request': request}).data)
+        cache_key = f"user_profile:{request.user.id}"
+        cached_data = cache.get(cache_key)
+        
+        if cached_data:
+            return Response(cached_data)
+
+        serializer = AdminProfileUpdateSerializer(request.user, context={'request': request})
+        cache.set(cache_key, serializer.data, 300)
+        return Response(serializer.data)
 
     def patch(self, request):
-        serializer = AdminProfileUpdateSerializer(request.user, data=request.data, partial=True, context={'request': request})
+        user = request.user
+        data = request.data.copy()
+        
+        new_email = data.get('email', '').strip().lower()
+        email_changed = False
+        
+        if new_email and new_email != user.email:
+            if User.objects.exclude(pk=user.pk).filter(email=new_email).exists():
+                return Response({"email": ["This email is already in use."]}, status=status.HTTP_400_BAD_REQUEST)
+            
+            email_changed = True
+            if 'email' in data:
+                del data['email']
+
+        serializer = AdminProfileUpdateSerializer(
+            user, 
+            data=data, 
+            partial=True, 
+            context={'request': request}
+        )
+        
         if serializer.is_valid():
             serializer.save()
-            cache.delete(f"user_profile:{request.user.id}")
-            return Response({"message": "Updated", "data": serializer.data})
-        return Response(serializer.errors, status=400)
+            
+            cache.delete(f"user_profile:{user.id}")
+            
+            response_data = {
+                "message": "Updated successfully", 
+                "data": serializer.data
+            }
+
+            if email_changed:
+                otp_code = generate_otp()
+                
+                cache_key = f"email_change_request:{user.id}"
+                cache.set(cache_key, {'new_email': new_email, 'otp': otp_code}, 600)
+                
+                send_otp_email_task.delay(new_email, otp_code)
+                
+                response_data['message'] = "Profile updated. Please verify the OTP sent to your new email."
+                response_data['email_verification_required'] = True
+
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class AdminChangePasswordView(APIView):
     permission_classes = [IsAdminUser]
@@ -183,5 +232,9 @@ class AdminChangePasswordView(APIView):
             user = request.user
             user.set_password(serializer.validated_data['new_password'])
             user.save()
+            
+            from django.contrib.auth import update_session_auth_hash
+            update_session_auth_hash(request, user)
+            
             return Response({"message": "Password changed"}, status=200)
         return Response(serializer.errors, status=400)

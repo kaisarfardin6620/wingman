@@ -1,5 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
+from authentication.views import VerifyEmailChangeView
 from .views import (
     DashboardAnalyticsView, 
     AdminUserViewSet, 
@@ -20,5 +21,6 @@ urlpatterns = [
     path('limits/', GlobalConfigView.as_view(), name='admin-limits'),
     path('settings/profile/', AdminProfileView.as_view(), name='admin-profile'),
     path('settings/password/', AdminChangePasswordView.as_view(), name='admin-password'),
+    path('settings/profile/verify-email/', VerifyEmailChangeView.as_view(), name='admin-verify-email'),
     path('', include(router.urls)),
 ]
