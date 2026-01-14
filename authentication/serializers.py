@@ -251,3 +251,11 @@ class UserChangePasswordSerializer(serializers.Serializer):
         except Exception as e:
             raise serializers.ValidationError({"new_password": list(e.messages)})
         return attrs
+    
+class EmailChangeVerifySerializer(serializers.Serializer):
+    otp = serializers.CharField(min_length=4, max_length=4)
+    
+    def validate_otp(self, value):
+        if not value.isdigit():
+            raise serializers.ValidationError("OTP must contain only numbers.")
+        return value    
