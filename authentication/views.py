@@ -18,7 +18,7 @@ from allauth.socialaccount.models import SocialLogin
 from core.utils import send_push_notification
 from .serializers import *
 from .models import User
-from .utils import send_otp_via_email, verify_otp_via_email
+from .utils import generate_otp, send_otp_via_email, verify_otp_via_email, send_otp_email_task
 
 logger = logging.getLogger(__name__)
 
@@ -243,24 +243,51 @@ class UserProfileView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def patch(self, request):
+        user = request.user
+        data = request.data.copy()
+        
+        new_email = data.get('email', '').strip().lower()
+        email_changed = False
+        
+        if new_email and new_email != user.email:
+            if User.objects.filter(email=new_email).exists():
+                return Response({"email": ["This email is already in use."]}, status=status.HTTP_400_BAD_REQUEST)
+            
+            email_changed = True
+            if 'email' in data:
+                del data['email']
+
         serializer = UserProfileSerializer(
-            request.user, 
-            data=request.data, 
+            user, 
+            data=data, 
             partial=True, 
             context={'request': request}
         )
         
         if serializer.is_valid():
             serializer.save()
-            cache_key = f"user_profile:{request.user.id}"
-            cache.delete(cache_key)
             
-            send_push_notification(request.user, "Profile Updated", "Your profile details have been updated.")
+            cache.delete(f"user_profile:{user.id}")
             
-            return Response({
+            response_data = {
                 "message": "Profile updated successfully",
                 "data": serializer.data
-            }, status=status.HTTP_200_OK)
+            }
+
+            if email_changed:
+                otp_code = generate_otp()
+                
+                cache_key = f"email_change_request:{user.id}"
+                cache.set(cache_key, {'new_email': new_email, 'otp': otp_code}, 600)
+                
+                send_otp_email_task.delay(new_email, otp_code)
+                
+                response_data['message'] = "Profile updated. Please verify the OTP sent to your new email to complete the change."
+                response_data['email_verification_required'] = True
+
+            send_push_notification(request.user, "Profile Updated", "Your profile details have been updated.")
+            
+            return Response(response_data, status=status.HTTP_200_OK)
             
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -380,3 +407,29 @@ class ChangePasswordView(APIView):
             return Response({"message": "Password changed successfully."}, status=status.HTTP_200_OK)
             
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+class VerifyEmailChangeView(APIView):
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [UserRateThrottle]
+
+    def post(self, request):
+        serializer = EmailChangeVerifySerializer(data=request.data)
+        if serializer.is_valid():
+            otp_input = serializer.validated_data['otp']
+            cache_key = f"email_change_request:{request.user.id}"
+            cached_data = cache.get(cache_key)
+            
+            if not cached_data:
+                return Response({"error": "OTP expired or no email change requested."}, status=status.HTTP_400_BAD_REQUEST)
+            
+            if str(cached_data['otp']) != str(otp_input):
+                return Response({"error": "Invalid OTP."}, status=status.HTTP_400_BAD_REQUEST)
+            user = request.user
+            user.email = cached_data['new_email']
+            user.save(update_fields=['email'])
+            cache.delete(cache_key)
+            cache.delete(f"user_profile:{user.id}")
+            
+            return Response({"message": "Email updated successfully."}, status=status.HTTP_200_OK)
+            
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)  

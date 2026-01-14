@@ -1,6 +1,6 @@
 from django.urls import path
 from .views import (
-    RegisterView, VerifyOTPView, LoginView, LogoutView, 
+    RegisterView, VerifyEmailChangeView, VerifyOTPView, LoginView, LogoutView, 
     ResendOTPView, ForgotPasswordView, ResetPasswordConfirmView, 
     UserProfileView, GoogleLoginView, AppleLoginView,ChangePasswordView  
 )
@@ -17,4 +17,5 @@ urlpatterns = [
     path('google/', GoogleLoginView.as_view(), name='google_login'),
     path('apple/', AppleLoginView.as_view(), name='apple_login'),
     path('change-password/', ChangePasswordView.as_view(), name='change-password'),
+    path('profile/verify-email/', VerifyEmailChangeView.as_view(), name='verify-email-change'),
 ]
