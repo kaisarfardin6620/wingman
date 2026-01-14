@@ -122,10 +122,6 @@ if DATABASE_URL:
     
     if 'postgres' in DATABASE_URL or 'postgresql' in DATABASE_URL:
         DATABASES['default']['OPTIONS']['options'] = '-c statement_timeout=30000'
-        DATABASES['default']['OPTIONS'].update({
-            'pool_size': int(os.getenv('DB_POOL_SIZE', 20)),
-            'max_overflow': int(os.getenv('DB_MAX_OVERFLOW', 10)),
-        })
 else:
     DATABASES = {
         'default': {
@@ -228,24 +224,29 @@ SIMPLE_JWT = {
     'SLIDING_TOKEN_REFRESH_LIFETIME': timedelta(days=1),
 }
 
-REDIS_URL = os.getenv('REDIS_URL', 'redis://127.0.0.1:6379/0')
+RUNNING_IN_DOCKER = os.environ.get('RUNNING_IN_DOCKER') == 'true'
+
+if RUNNING_IN_DOCKER:
+    REDIS_LOCATION = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
+else:
+    REDIS_LOCATION = 'redis://127.0.0.1:6379/0'
 
 CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [REDIS_URL],
+            "hosts": [REDIS_LOCATION],
             "capacity": int(os.getenv('CHANNEL_CAPACITY', 1000)),
             "expiry": int(os.getenv('CHANNEL_EXPIRY', 60)),
         },
     },
 }
 
-CELERY_BROKER_URL = os.getenv('REDIS_URL', 'redis://127.0.0.1:6379/0')
+CELERY_BROKER_URL = REDIS_LOCATION
+CELERY_RESULT_BACKEND = REDIS_LOCATION
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
-CELERY_RESULT_BACKEND = 'redis://127.0.0.1:6379/0'
 CELERY_RESULT_EXTENDED = True
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = int(os.getenv('CELERY_TASK_TIME_LIMIT', 300))
@@ -262,7 +263,7 @@ CELERY_BROKER_POOL_LIMIT = int(os.getenv('CELERY_BROKER_POOL_LIMIT', 10))
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": os.getenv('REDIS_CACHE_URL', os.getenv('REDIS_URL', 'redis://127.0.0.1:6379/1')),
+        "LOCATION": REDIS_LOCATION,
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
             "CONNECTION_POOL_KWARGS": {
@@ -278,6 +279,7 @@ CACHES = {
         "TIMEOUT": int(os.getenv('CACHE_DEFAULT_TIMEOUT', 300)),
     }
 }
+
 
 EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
 EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.gmail.com')

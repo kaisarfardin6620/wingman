@@ -16,14 +16,14 @@ COPY requirements.txt .
 RUN python -m venv .venv \
     && .venv/bin/pip install --upgrade pip \
     && .venv/bin/pip install -r requirements.txt \
-    && .venv/bin/pip install gunicorn \
+    && .venv/bin/pip install gunicorn uvicorn[standard] \
     && .venv/bin/python -m spacy download en_core_web_sm
 
 RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
 
 COPY . .
 
-RUN mkdir -p /app/logs /app/static /app/media \
+RUN mkdir -p /app/logs /app/staticfiles /app/media \
     && chown -R appuser:appgroup /app
 
 USER appuser
@@ -31,4 +31,5 @@ USER appuser
 EXPOSE 8000
 
 ENTRYPOINT ["/app/entrypoint.sh"]
-CMD ["gunicorn", "wingman.wsgi:application", "--bind", "0.0.0.0:8000"]
+
+CMD ["gunicorn", "wingman.asgi:application", "--bind", "0.0.0.0:8000", "-k", "uvicorn.workers.UvicornWorker", "--workers", "3"]
