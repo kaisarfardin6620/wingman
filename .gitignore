@@ -27,3 +27,4 @@ celerybeat-schedule-shm
 *.pyo
 chat_uploads
 profile_images
+serviceaccountkey.json
