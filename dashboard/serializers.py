@@ -32,27 +32,18 @@ class AdminUserListSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'date_joined', 'last_login']
 
     def get_status(self, obj):
-        """Get user status"""
         return "Active" if obj.is_active else "Inactive"
 
     def get_usage_count(self, obj):
-        """
-        Get message count
-        ✅ Cached or use annotation if provided
-        """
-        # Check if already annotated in queryset
         if hasattr(obj, 'msg_count'):
             return obj.msg_count
         
-        # Fallback to query
         return Message.objects.filter(sender=obj, is_ai=False).count()
 
     def get_subscription(self, obj):
-        """Get subscription type"""
         return "Premium" if obj.is_premium else "Free"
     
     def get_profile_image_url(self, obj):
-        """Get full profile image URL"""
         if obj.profile_image and hasattr(obj.profile_image, 'url'):
             request = self.context.get('request')
             if request:
@@ -68,7 +59,6 @@ class AdminToneSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
     
     def validate_name(self, value):
-        """Validate tone name"""
         if value:
             value = value.strip()
             
@@ -77,7 +67,6 @@ class AdminToneSerializer(serializers.ModelSerializer):
             if len(value) > 50:
                 raise serializers.ValidationError("Name cannot exceed 50 characters.")
             
-            # Check uniqueness (exclude current instance on update)
             queryset = Tone.objects.filter(name__iexact=value)
             if self.instance:
                 queryset = queryset.exclude(pk=self.instance.pk)
@@ -95,7 +84,6 @@ class AdminPersonaSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
     
     def validate_name(self, value):
-        """Validate persona name"""
         if value:
             value = value.strip()
             
@@ -104,7 +92,6 @@ class AdminPersonaSerializer(serializers.ModelSerializer):
             if len(value) > 50:
                 raise serializers.ValidationError("Name cannot exceed 50 characters.")
             
-            # Check uniqueness (exclude current instance on update)
             queryset = Persona.objects.filter(name__iexact=value)
             if self.instance:
                 queryset = queryset.exclude(pk=self.instance.pk)
@@ -115,7 +102,6 @@ class AdminPersonaSerializer(serializers.ModelSerializer):
         return value
     
     def validate_description(self, value):
-        """Validate description"""
         if value:
             if len(value) < 10:
                 raise serializers.ValidationError("Description must be at least 10 characters.")
@@ -132,7 +118,6 @@ class GlobalConfigSerializer(serializers.ModelSerializer):
         read_only_fields = ['updated_at']
     
     def validate_daily_free_limit(self, value):
-        """Validate daily free limit"""
         if value < 1:
             raise serializers.ValidationError("Daily limit must be at least 1.")
         if value > 1000:
@@ -140,7 +125,6 @@ class GlobalConfigSerializer(serializers.ModelSerializer):
         return value
     
     def validate_max_chat_length(self, value):
-        """Validate max chat length"""
         if value < 100:
             raise serializers.ValidationError("Max chat length must be at least 100 characters.")
         if value > 50000:
@@ -148,7 +132,6 @@ class GlobalConfigSerializer(serializers.ModelSerializer):
         return value
     
     def validate_ocr_limit(self, value):
-        """Validate OCR limit"""
         if value < 1:
             raise serializers.ValidationError("OCR limit must be at least 1.")
         if value > 100:
@@ -165,7 +148,6 @@ class AdminProfileUpdateSerializer(serializers.ModelSerializer):
         read_only_fields = ['id']
 
     def get_profile_image_url(self, obj):
-        """Get full profile image URL"""
         if obj.profile_image and hasattr(obj.profile_image, 'url'):
             request = self.context.get('request')
             if request:
@@ -174,20 +156,17 @@ class AdminProfileUpdateSerializer(serializers.ModelSerializer):
         return None
 
     def validate_email(self, value):
-        """Validate email uniqueness"""
         if value:
             value = value.lower().strip()
             
             user = self.context['request'].user
             
-            # Check if email is already taken by another user
             if User.objects.exclude(pk=user.pk).filter(email=value).exists():
                 raise serializers.ValidationError("This email is already in use.")
         
         return value
     
     def validate_name(self, value):
-        """Validate name"""
         if value:
             value = value.strip()
             
@@ -199,14 +178,10 @@ class AdminProfileUpdateSerializer(serializers.ModelSerializer):
         return value
     
     def validate_profile_image(self, value):
-        """Validate profile image"""
         if value:
-            # Check file size (max 5MB)
-            max_size = 5 * 1024 * 1024
+            max_size = 50 * 1024 * 1024
             if value.size > max_size:
-                raise serializers.ValidationError("Image file size cannot exceed 5MB.")
-            
-            # Check file type
+                raise serializers.ValidationError("Image file size cannot exceed 50MB.")
             allowed_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp']
             if hasattr(value, 'content_type'):
                 if value.content_type not in allowed_types:
@@ -234,21 +209,17 @@ class ChangePasswordSerializer(serializers.Serializer):
     )
 
     def validate_old_password(self, value):
-        """Verify old password"""
         user = self.context['request'].user
         if not user.check_password(value):
             raise serializers.ValidationError("Old password is incorrect.")
         return value
 
     def validate(self, attrs):
-        """Cross-field validation"""
-        # Check if passwords match
         if attrs['new_password'] != attrs['confirm_password']:
             raise serializers.ValidationError({
                 "confirm_password": "Password fields didn't match."
             })
         
-        # Validate password strength
         user = self.context['request'].user
         try:
             validate_password(attrs['new_password'], user)
