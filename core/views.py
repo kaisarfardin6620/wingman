@@ -17,7 +17,11 @@ from .serializers import (
     PasscodeVerifySerializer, ResetPasscodeSerializer,
     ChangePasscodeSerializer
 )
+from rest_framework.decorators import action
 import logging
+from .models import Notification
+from .serializers import NotificationSerializer
+
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -227,3 +231,23 @@ class FCMTokenView(APIView):
             )
             return Response({"message": "Token registered"})
         return Response({"error": "Token required"}, status=400)
+    
+class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
+    permission_classes = [IsAuthenticated]
+    serializer_class = NotificationSerializer
+    throttle_classes = [UserRateThrottle]
+
+    def get_queryset(self):
+        return Notification.objects.filter(user=self.request.user)
+
+    @action(detail=True, methods=['patch'])
+    def mark_read(self, request, pk=None):
+        notification = self.get_object()
+        notification.is_read = True
+        notification.save()
+        return Response({'status': 'marked as read'})
+
+    @action(detail=False, methods=['patch'])
+    def mark_all_read(self, request):
+        self.get_queryset().update(is_read=True)
+        return Response({'status': 'all marked as read'})    

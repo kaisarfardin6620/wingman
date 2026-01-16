@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth.hashers import make_password
 from .models import Tone, Persona, UserSettings, TargetProfile
+from .models import Notification
 
 class ToneSerializer(serializers.ModelSerializer):
     class Meta:
@@ -74,3 +75,9 @@ class ChangePasscodeSerializer(serializers.Serializer):
         if attrs['new_passcode'] != attrs['confirm_passcode']:
             raise serializers.ValidationError({"new_passcode": "Passcodes do not match."})
         return attrs
+    
+class NotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notification
+        fields = ['id', 'title', 'body', 'data', 'is_read', 'created_at']
+        read_only_fields = ['id', 'title', 'body', 'data', 'created_at']    

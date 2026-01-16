@@ -3,11 +3,12 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     ConfigDataView, UserSettingsView, TargetProfileViewSet,
     VerifyPasscodeView, ForgotPasscodeRequestView, ResetPasscodeConfirmView,
-    ChangePasscodeView, FCMTokenView
+    ChangePasscodeView, FCMTokenView, NotificationViewSet
 )
 
 router = DefaultRouter()
 router.register(r'profiles', TargetProfileViewSet, basename='target-profile')
+router.register(r'notifications', NotificationViewSet, basename='notifications')
 
 urlpatterns = [
     path('config/', ConfigDataView.as_view(), name='core-config'),
