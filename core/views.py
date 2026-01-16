@@ -14,7 +14,8 @@ from .models import Tone, Persona, UserSettings, TargetProfile, FCMDevice
 from .serializers import (
     ToneSerializer, PersonaSerializer,
     UserSettingsSerializer, TargetProfileSerializer,
-    PasscodeVerifySerializer, ResetPasscodeSerializer
+    PasscodeVerifySerializer, ResetPasscodeSerializer,
+    ChangePasscodeSerializer
 )
 import logging
 
@@ -22,7 +23,7 @@ User = get_user_model()
 logger = logging.getLogger(__name__)
 
 class ConfigThrottle(UserRateThrottle):
-    rate = '30/minute'
+    scope = 'anon'
 
 class ConfigDataView(APIView):
     permission_classes = [IsAuthenticated]
@@ -189,6 +190,27 @@ class ResetPasscodeConfirmView(APIView):
             cache.delete(f"passcode_attempts:{request.user.id}")
             return Response({"message": "Passcode reset"}, status=status.HTTP_200_OK)
         return Response({"error": message}, status=status.HTTP_400_BAD_REQUEST)
+
+class ChangePasscodeView(APIView):
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [UserRateThrottle]
+
+    def post(self, request):
+        serializer = ChangePasscodeSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        user_settings, _ = UserSettings.objects.get_or_create(user=request.user)
+        
+        if user_settings.passcode_lock_enabled:
+            if not user_settings.check_passcode(serializer.validated_data['old_passcode']):
+                return Response({"error": "Incorrect old passcode"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        user_settings.set_passcode(serializer.validated_data['new_passcode'])
+        user_settings.passcode_lock_enabled = True
+        user_settings.save()
+        
+        return Response({"message": "Passcode changed successfully"}, status=status.HTTP_200_OK)
 
 class FCMTokenView(APIView):
     permission_classes = [IsAuthenticated]

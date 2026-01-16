@@ -70,6 +70,13 @@ class GlobalConfig(models.Model):
         return config
 
 class UserSettings(models.Model):
+    GOAL_CHOICES = [
+        ('Serious Relationship', 'Serious Relationship'),
+        ('Casual Dating', 'Casual Dating'),
+        ('Just Conversation', 'Just Conversation'),
+        ('New Friends', 'New Friends'),
+    ]
+
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -90,14 +97,12 @@ class UserSettings(models.Model):
     )
     active_tones = models.ManyToManyField(Tone, blank=True, related_name='user_settings')
     linguistic_style = models.TextField(blank=True, null=True)
-    
+    goal = models.CharField(max_length=50, choices=GOAL_CHOICES, blank=True, null=True)
     passcode_lock_enabled = models.BooleanField(default=False)
     passcode = models.CharField(max_length=128, blank=True, null=True)
-    
     gold_theme = models.BooleanField(default=False)
     premium_logo = models.BooleanField(default=False)
     hide_notifications = models.BooleanField(default=False)
-    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -131,6 +136,7 @@ class TargetProfile(models.Model):
         db_index=True
     )
     name = models.CharField(max_length=100, db_index=True)
+    birthday = models.DateField(null=True, blank=True)
     preferences = models.JSONField(default=list, blank=True)
     what_she_likes = models.JSONField(default=list, blank=True)
     details = models.TextField(blank=True)

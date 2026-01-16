@@ -1,16 +1,16 @@
-from rest_framework import viewsets, mixins, parsers, status
+from rest_framework import viewsets, mixins, parsers, status, filters
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.throttling import UserRateThrottle, AnonRateThrottle
 from django.core.cache import cache
-from django.db.models import Prefetch, Count
+from django.db.models import Prefetch, Count, Max
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
 from django.shortcuts import get_object_or_404
 import logging
-
+from core.models import GlobalConfig
 from .models import ChatSession, Message
 from .serializers import (
     ChatSessionListSerializer,
@@ -25,11 +25,11 @@ logger = logging.getLogger(__name__)
 
 
 class ChatThrottle(UserRateThrottle):
-    rate = '60/minute'
+    scope = 'chat'
 
 
 class UploadThrottle(UserRateThrottle):
-    rate = '10/minute'
+    scope = 'user'
 
 
 class ChatSessionViewSet(viewsets.GenericViewSet,
@@ -40,6 +40,8 @@ class ChatSessionViewSet(viewsets.GenericViewSet,
     throttle_classes = [ChatThrottle]
     serializer_class = ChatSessionListSerializer
     lookup_field = 'conversation_id'
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['title', 'messages__text']
 
     def get_queryset(self):
         return ChatSession.objects.filter(
@@ -48,7 +50,9 @@ class ChatSessionViewSet(viewsets.GenericViewSet,
             'target_profile'
         ).prefetch_related(
             'events'
-        ).order_by('-updated_at')
+        ).annotate(
+            last_updated=Max('messages__created_at')
+        ).order_by('-updated_at').distinct()
     
     def get_object(self):
         conversation_id = self.kwargs.get('conversation_id')
@@ -193,9 +197,10 @@ class ChatSessionImageUploadView(APIView):
                 ).count()
                 cache.set(cache_key, upload_count, 3600)
             
-            if upload_count >= 10:
+            config = GlobalConfig.load()
+            if upload_count >= config.ocr_limit:
                 return Response(
-                    {"error": "Daily upload limit reached (10/day). Upgrade to Premium for unlimited uploads."},
+                    {"error": f"Daily upload limit reached ({config.ocr_limit}/day). Upgrade to Premium for unlimited uploads."},
                     status=status.HTTP_429_TOO_MANY_REQUESTS
                 )
 
