@@ -19,6 +19,17 @@ def initialize_firebase():
         logger.error(f"Firebase initialization error: {e}")
 
 def send_push_notification(user, title, body, data=None):
+    try:
+        from .models import Notification
+        Notification.objects.create(
+            user=user,
+            title=title,
+            body=body,
+            data=data or {}
+        )
+    except Exception as e:
+        logger.error(f"Failed to save notification to DB for user {user.id}: {e}")
+
     if not user.is_active:
         return
 
