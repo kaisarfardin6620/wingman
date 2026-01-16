@@ -1,5 +1,6 @@
 from django.contrib import admin
-from .models import Tone, Persona, UserSettings, TargetProfile, GlobalConfig
+from .models import Tone, Persona, UserSettings, TargetProfile, GlobalConfig, FCMDevice, Notification
+
 
 @admin.register(Tone)
 class ToneAdmin(admin.ModelAdmin):
@@ -23,3 +24,18 @@ class GlobalConfigAdmin(admin.ModelAdmin):
 
     def has_add_permission(self, request):
         return not GlobalConfig.objects.exists()
+    
+@admin.register(FCMDevice)
+class FCMDeviceAdmin(admin.ModelAdmin):
+    list_display = ('user', 'device_type', 'token_preview', 'created_at')
+    search_fields = ('user__email',)
+    list_filter = ('device_type', 'created_at')
+
+    def token_preview(self, obj):
+        return obj.token[:20] + "..." if obj.token else ""
+
+@admin.register(Notification)
+class NotificationAdmin(admin.ModelAdmin):
+    list_display = ('user', 'title', 'is_read', 'created_at')
+    list_filter = ('is_read', 'created_at')
+    search_fields = ('user__email', 'title', 'body')    
