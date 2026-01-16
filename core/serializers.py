@@ -31,7 +31,7 @@ class UserSettingsSerializer(serializers.ModelSerializer):
             'hide_notifications',
             'selected_tones_details', 'active_tones_ids',
             'active_persona_details', 'active_persona_id',
-            'linguistic_style'
+            'linguistic_style', 'goal'
         ]
         extra_kwargs = {
             'passcode': {'write_only': True},
@@ -46,7 +46,7 @@ class UserSettingsSerializer(serializers.ModelSerializer):
 class TargetProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = TargetProfile
-        fields = ['id', 'name', 'preferences', 'what_she_likes', 'details', 'her_mentions', 'avatar', 'created_at']
+        fields = ['id', 'name', 'birthday', 'preferences', 'what_she_likes', 'details', 'her_mentions', 'avatar', 'created_at']
 
 class PasscodeVerifySerializer(serializers.Serializer):
     passcode = serializers.CharField(max_length=4)
@@ -57,6 +57,16 @@ class ForgotPasscodeSerializer(serializers.Serializer):
 class ResetPasscodeSerializer(serializers.Serializer):
     email = serializers.EmailField()
     otp = serializers.CharField(max_length=4)
+    new_passcode = serializers.CharField(max_length=4)
+    confirm_passcode = serializers.CharField(max_length=4)
+
+    def validate(self, attrs):
+        if attrs['new_passcode'] != attrs['confirm_passcode']:
+            raise serializers.ValidationError({"new_passcode": "Passcodes do not match."})
+        return attrs
+
+class ChangePasscodeSerializer(serializers.Serializer):
+    old_passcode = serializers.CharField(max_length=4)
     new_passcode = serializers.CharField(max_length=4)
     confirm_passcode = serializers.CharField(max_length=4)
 

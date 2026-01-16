@@ -45,14 +45,12 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None):
     client = OpenAI(api_key=settings.OPENAI_API_KEY)
     try:
         session = ChatSession.objects.select_related('user', 'target_profile').get(id=session_id)
-        
         rate_limit_key = f"ai_response_rate:{session.user.id}"
         request_count = cache.get(rate_limit_key, 0)
         if not session.user.is_premium and request_count >= 10:
             send_ws_message(session.conversation_id, {'id': None, 'text': "Too fast. Please wait a moment.", 'is_ai': True, 'type': 'rate_limit'})
             return
         cache.set(rate_limit_key, request_count + 1, 60)
-        
         user_settings = UserSettings.objects.select_related('active_persona').prefetch_related('active_tones').filter(user=session.user).first()
         if not user_settings:
             user_settings, _ = UserSettings.objects.get_or_create(user=session.user)
@@ -85,13 +83,14 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None):
         target_prompt = ""
         if session.target_profile:
             tp = session.target_profile
-            target_prompt = f"CONTEXT: User is asking about '{tp.name}'. Likes: {tp.what_she_likes}. Notes: {tp.details}"
+            target_prompt = f"CONTEXT: User is asking about '{tp.name}'. Likes: {tp.what_she_likes}. Notes: {tp.details}. Mentions: {tp.her_mentions}"
 
         system_prompt = (
             f"{persona_prompt}\n{user_style_prompt}\n{tone_prompt}\n{lang_instruction}\n{target_prompt}\n"
             "You are a helpful Wingman AI dating coach.\n"
             "IMPORTANT: You must return a valid JSON object.\n"
             "Structure: { 'response_type': 'text' | 'suggestions', 'content': string | array of strings }\n"
+            "If returning suggestions, 'content' MUST be a list of strings: ['Option 1', 'Option 2', ...]\n"
         )
 
         recent_messages = session.messages.only('is_ai', 'text', 'ocr_extracted_text').order_by('-created_at')[:MAX_HISTORY_MESSAGES]
@@ -195,8 +194,7 @@ def profile_target_engine(self, session_id, latest_text):
                 return
             
             tp = TargetProfile.objects.select_for_update().get(id=session.target_profile.id)
-            
-            prompt = f"Analyze about {tp.name}. New likes from: {latest_text}. Return JSON {{new_likes:[], new_preferences:[]}}"
+            prompt = f"Analyze about {tp.name}. New text from conversation: {latest_text}. Return JSON {{new_likes:[], new_preferences:[], new_mentions: string}}"
             response = client.chat.completions.create(
                 model="gpt-4o-mini", 
                 messages=[{"role": "user", "content": prompt}], 
@@ -221,6 +219,14 @@ def profile_target_engine(self, session_id, latest_text):
             if data.get('new_preferences'):
                 if add_if_new(tp.preferences, data['new_preferences']):
                     updated = True
+            
+            if data.get('new_mentions'):
+                if not tp.her_mentions:
+                    tp.her_mentions = data['new_mentions']
+                    updated = True
+                elif data['new_mentions'] not in tp.her_mentions:
+                    tp.her_mentions += f" | {data['new_mentions']}"
+                    updated = True
                     
             if updated:
                 tp.save()
@@ -233,10 +239,17 @@ def linguistic_engine(self, user_id, session_id):
     client = OpenAI(api_key=settings.OPENAI_API_KEY)
     try:
         user_settings, _ = UserSettings.objects.get_or_create(user_id=user_id)
-        user_msgs = Message.objects.filter(sender_id=user_id, is_ai=False).only('text').order_by('-created_at')[:10]
-        text_sample = "\n".join([m.text for m in user_msgs if m.text])
-        if not text_sample: return
-        prompt = f"Analyze style concisely (under 100 words): {text_sample[:1000]}"
+        user_msgs = Message.objects.filter(sender_id=user_id, is_ai=False).only('text', 'ocr_extracted_text').order_by('-created_at')[:10]
+        
+        text_samples = []
+        for m in user_msgs:
+            if m.text: text_samples.append(m.text)
+            if m.ocr_extracted_text: text_samples.append(f"[OCR]: {m.ocr_extracted_text}")
+            
+        full_sample = "\n".join(text_samples)
+        if not full_sample: return
+        
+        prompt = f"Analyze style concisely (under 100 words): {full_sample[:2000]}"
         response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}], max_tokens=150)
         user_settings.linguistic_style = response.choices[0].message.content.strip()
         user_settings.save()

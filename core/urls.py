@@ -3,7 +3,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     ConfigDataView, UserSettingsView, TargetProfileViewSet,
     VerifyPasscodeView, ForgotPasscodeRequestView, ResetPasscodeConfirmView,
-    FCMTokenView
+    ChangePasscodeView, FCMTokenView
 )
 
 router = DefaultRouter()
@@ -15,6 +15,7 @@ urlpatterns = [
     path('passcode/verify/', VerifyPasscodeView.as_view(), name='passcode-verify'),
     path('passcode/forgot/', ForgotPasscodeRequestView.as_view(), name='passcode-forgot'),
     path('passcode/reset/', ResetPasscodeConfirmView.as_view(), name='passcode-reset'),
+    path('passcode/change/', ChangePasscodeView.as_view(), name='passcode-change'),
     path('fcm/register/', FCMTokenView.as_view(), name='fcm-register'),
     path('', include(router.urls)),
 ]

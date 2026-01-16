@@ -23,7 +23,7 @@ from .utils import generate_otp, send_otp_via_email, verify_otp_via_email, send_
 logger = logging.getLogger(__name__)
 
 class OTPRateThrottle(AnonRateThrottle):
-    rate = '5/minute'
+    scope = 'otp' 
 
 class RegisterView(APIView):
     throttle_classes = [AnonRateThrottle]

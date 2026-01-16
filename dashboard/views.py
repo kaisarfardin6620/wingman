@@ -28,7 +28,7 @@ User = get_user_model()
 logger = logging.getLogger(__name__)
 
 class AdminThrottle(UserRateThrottle):
-    rate = '100/minute'
+    scope = 'user'
 
 class DashboardAnalyticsView(APIView):
     permission_classes = [IsAdminUser]
