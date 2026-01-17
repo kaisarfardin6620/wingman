@@ -3,6 +3,7 @@ from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.utils.translation import gettext_lazy as _
 from .managers import CustomUserManager
 from rest_framework_simplejwt.tokens import RefreshToken
+from django.utils import timezone
 
 class User(AbstractBaseUser, PermissionsMixin):
     email = models.EmailField(
@@ -22,6 +23,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = []
     objects = CustomUserManager()
+    is_deleted = models.BooleanField(default=False, db_index=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         verbose_name = _("User")

@@ -259,3 +259,17 @@ class EmailChangeVerifySerializer(serializers.Serializer):
         if not value.isdigit():
             raise serializers.ValidationError("OTP must contain only numbers.")
         return value    
+    
+class DeleteAccountSerializer(serializers.Serializer):
+    password = serializers.CharField(required=False, write_only=True)
+
+    def validate(self, attrs):
+        user = self.context['request'].user
+        password = attrs.get('password')
+        if user.has_usable_password():
+            if not password:
+                raise serializers.ValidationError({"password": "Password is required to delete account."})
+            if not user.check_password(password):
+                raise serializers.ValidationError({"password": "Incorrect password."})
+        
+        return attrs    
