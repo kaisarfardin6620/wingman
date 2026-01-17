@@ -447,21 +447,14 @@ class DeleteAccountView(APIView):
             
             try:
                 with transaction.atomic():
-                    user.is_active = False
-                    user.is_deleted = True
-                    user.deleted_at = timezone.now()
-                    user.save()
-                    tokens = OutstandingToken.objects.filter(user=user)
-                    for token in tokens:
-                        BlacklistedToken.objects.get_or_create(token=token)
-                    
-                    user.fcm_devices.all().delete()
                     cache.delete(f"user_profile:{user.id}")
+                    cache.delete(f"user_settings:{user.id}")
+                    user.delete()
 
-                return Response({"message": "Account deleted successfully. We are sorry to see you go."}, status=status.HTTP_200_OK)
+                return Response({"message": "Account permanently deleted."}, status=status.HTTP_200_OK)
                 
             except Exception as e:
                 logger.error(f"Error deleting account {user.id}: {e}")
                 return Response({"error": "Something went wrong."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)    
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)   
