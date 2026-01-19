@@ -150,22 +150,6 @@ class ResendOTPSerializer(serializers.Serializer):
     def validate_email(self, value):
         return value.lower().strip()
 
-
-class LogoutSerializer(serializers.Serializer):
-    refresh = serializers.CharField(
-        required=True,
-        error_messages={
-            'required': 'Refresh token is required.',
-        }
-    )
-    fcm_token = serializers.CharField(required=False, allow_null=True, allow_blank=True)
-    
-    def validate_refresh(self, value):
-        if not value or len(value) < 20:
-            raise serializers.ValidationError("Invalid refresh token format.")
-        return value
-
-
 class UserProfileSerializer(serializers.ModelSerializer):
     profile_image_url = serializers.SerializerMethodField()
     

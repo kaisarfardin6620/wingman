@@ -129,26 +129,7 @@ class LoginView(APIView):
             "user_id": user.id,
         }, status=status.HTTP_200_OK)
 
-class LogoutView(APIView):
-    permission_classes = [IsAuthenticated]
-    throttle_classes = [UserRateThrottle]
 
-    def post(self, request):
-        serializer = LogoutSerializer(data=request.data)
-        if serializer.is_valid():
-            try:
-                refresh_token = serializer.validated_data['refresh']
-                token = RefreshToken(refresh_token)
-                token.blacklist()
-                
-                fcm_token = serializer.validated_data.get('fcm_token')
-                if fcm_token:
-                    request.user.fcm_devices.filter(token=fcm_token).delete()
-                
-                return Response({"message": "Successfully logged out."}, status=status.HTTP_200_OK)
-            except TokenError:
-                return Response({"error": "Invalid token"}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class ResendOTPView(APIView):
     throttle_classes = [OTPRateThrottle]
