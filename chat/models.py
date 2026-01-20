@@ -47,7 +47,11 @@ class ChatSession(models.Model):
     def update_preview(self):
         last_msg = self.messages.order_by('-created_at').first()
         if last_msg:
-            preview_text = last_msg.text or "[Image]"
+            preview_text = last_msg.text
+            if not preview_text:
+                if last_msg.image: preview_text = "[Image]"
+                elif last_msg.audio: preview_text = "[Voice Note]"
+                else: preview_text = ""
             
             if last_msg.is_ai and preview_text.strip().startswith('{'):
                 try:
@@ -83,6 +87,7 @@ class Message(models.Model):
     is_ai = models.BooleanField(default=False, db_index=True)
     text = models.TextField(blank=True, null=True)
     image = models.ImageField(upload_to='chat_uploads/', null=True, blank=True)
+    audio = models.FileField(upload_to='chat_audio/', null=True, blank=True)
     ocr_extracted_text = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     tokens_used = models.PositiveIntegerField(default=0, null=True, blank=True)
@@ -115,6 +120,8 @@ class DetectedEvent(models.Model):
     is_confirmed = models.BooleanField(default=False)
     is_cancelled = models.BooleanField(default=False)
     has_conflict = models.BooleanField(default=False)
+    reminder_datetime = models.DateTimeField(null=True, blank=True, db_index=True)
+    reminder_sent = models.BooleanField(default=False)
 
     class Meta:
         verbose_name = "Detected Event"
@@ -122,6 +129,7 @@ class DetectedEvent(models.Model):
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['session', '-created_at']),
+            models.Index(fields=['reminder_datetime', 'reminder_sent']),
         ]
 
     def __str__(self):

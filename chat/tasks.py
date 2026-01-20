@@ -7,6 +7,8 @@ from asgiref.sync import async_to_sync
 from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction
+from django.utils import timezone
+from datetime import timedelta
 from openai import OpenAI, OpenAIError
 from .models import ChatSession, Message, DetectedEvent
 from core.models import UserSettings, TargetProfile
@@ -84,6 +86,7 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None):
         if session.target_profile:
             tp = session.target_profile
             target_prompt = f"CONTEXT: User is asking about '{tp.name}'. Likes: {tp.what_she_likes}. Notes: {tp.details}. Mentions: {tp.her_mentions}"
+
         uncensored_instruction = ""
         if session.user.is_premium:
             uncensored_instruction = (
@@ -195,6 +198,28 @@ def analyze_screenshot_task(self, message_id):
     except Exception as e: logger.error(f"OCR Error: {e}")
 
 @shared_task(bind=True, max_retries=2, autoretry_for=(OpenAIError,))
+def transcribe_audio_task(self, message_id):
+    client = OpenAI(api_key=settings.OPENAI_API_KEY)
+    try:
+        message = Message.objects.select_related('session').get(id=message_id)
+        if not message.audio: return
+        with message.audio.open('rb') as audio_file:
+            transcript = client.audio.transcriptions.create(
+                model="whisper-1", 
+                file=audio_file,
+                response_format="text"
+            )
+        
+        message.text = transcript.strip()
+        message.save(update_fields=['text'])
+        cache.delete(f"chat_history:{message.session.conversation_id}")
+        send_ws_message(message.session.conversation_id, {'id': message.id, 'text': message.text, 'is_ai': False, 'type': 'transcription_complete'})
+        generate_ai_response.delay(message.session.id, message.text)
+        
+    except Exception as e:
+        logger.error(f"Transcription Error: {e}")
+
+@shared_task(bind=True, max_retries=2, autoretry_for=(OpenAIError,))
 def profile_target_engine(self, session_id, latest_text):
     client = OpenAI(api_key=settings.OPENAI_API_KEY)
     try:
@@ -285,19 +310,28 @@ def intent_engine(self, session_id, user_text):
             f"Existing Schedule:\n{existing_context}\n\n"
             "Task: Detect if this is a new plan/event.\n"
             "If yes, extract details and check if it conflicts/overlaps with the Existing Schedule.\n"
-            "Return JSON: { \"is_event\": bool, \"title\": string, \"start_time\": string, \"description\": string, \"has_conflict\": bool, \"conflicting_with\": string }"
+            "Return JSON: { \"is_event\": bool, \"title\": string, \"start_time\": string, \"start_time_iso\": string (ISO 8601 format), \"description\": string, \"has_conflict\": bool, \"conflicting_with\": string }"
         )
 
         response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"})
         data = json.loads(response.choices[0].message.content)
         
         if data.get('is_event'):
+            reminder_dt = None
+            if data.get('start_time_iso'):
+                from dateutil import parser
+                try:
+                    reminder_dt = parser.parse(data['start_time_iso'])
+                except:
+                    pass
+
             DetectedEvent.objects.create(
                 session=session, 
                 title=data.get('title', 'Event')[:255], 
                 description=data.get('description', '')[:500], 
                 start_time=data.get('start_time', '')[:100],
-                has_conflict=data.get('has_conflict', False)
+                has_conflict=data.get('has_conflict', False),
+                reminder_datetime=reminder_dt
             )
             
             msg = f"Added {data.get('title')} to plan."
@@ -318,3 +352,30 @@ def generate_chat_title(self, session_id, first_message):
         session.title = title[:252]
         session.save(update_fields=['title'])
     except Exception as e: pass
+
+@shared_task
+def check_reminders_task():
+    """
+    Periodic task to check for events starting soon (e.g., in 1 hour or 15 mins)
+    """
+    now = timezone.now()
+    upcoming_window = now + timedelta(minutes=15)
+    
+    events = DetectedEvent.objects.filter(
+        reminder_datetime__gte=now,
+        reminder_datetime__lte=upcoming_window,
+        reminder_sent=False,
+        is_cancelled=False
+    ).select_related('session__user')
+    
+    for event in events:
+        try:
+            send_push_notification(
+                event.session.user,
+                "Upcoming Event Reminder",
+                f"Reminder: {event.title} is starting at {event.start_time}."
+            )
+            event.reminder_sent = True
+            event.save(update_fields=['reminder_sent'])
+        except Exception as e:
+            logger.error(f"Failed to send reminder for event {event.id}: {e}")

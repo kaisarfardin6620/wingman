@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 from celery import Celery
 from dotenv import load_dotenv
+from celery.schedules import crontab
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -15,6 +16,12 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'wingman.settings')
 app = Celery('wingman')
 app.config_from_object('django.conf:settings', namespace='CELERY')
 app.autodiscover_tasks()
+app.conf.beat_schedule = {
+    'check-reminders-every-minute': {
+        'task': 'chat.tasks.check_reminders_task',
+        'schedule': crontab(minute='*'),
+    },
+}
 
 @app.task(bind=True)
 def debug_task(self):

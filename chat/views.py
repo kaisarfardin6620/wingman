@@ -19,7 +19,7 @@ from .serializers import (
     MessageSerializer,
     MessageUploadSerializer
 )
-from .tasks import analyze_screenshot_task
+from .tasks import analyze_screenshot_task, transcribe_audio_task
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +115,7 @@ class ChatSessionViewSet(viewsets.GenericViewSet,
         session = self.get_object()
         
         messages = session.messages.only(
-            'id', 'is_ai', 'text', 'image',
+            'id', 'is_ai', 'text', 'image', 'audio',
             'ocr_extracted_text', 'tokens_used', 'created_at'
         ).order_by('created_at')
         
@@ -150,9 +150,7 @@ class ChatSessionViewSet(viewsets.GenericViewSet,
     @action(detail=False, methods=['delete'])
     def clear_all(self, request):
         user_sessions = ChatSession.objects.filter(user=request.user)
-        
         conversation_ids = list(user_sessions.values_list('conversation_id', flat=True))
-        
         deleted_count, _ = user_sessions.delete()
         
         for conv_id in conversation_ids:
@@ -184,7 +182,6 @@ class ChatSessionImageUploadView(APIView):
 
         if not request.user.is_premium:
             from django.utils import timezone
-            
             today = timezone.now().date()
             cache_key = f"upload_count:{request.user.id}:{today}"
             upload_count = cache.get(cache_key)
@@ -206,13 +203,15 @@ class ChatSessionImageUploadView(APIView):
 
         serializer = MessageUploadSerializer(data=request.data)
         if not serializer.is_valid():
-            return Response(
-                serializer.errors,
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        image = serializer.validated_data['image']
-        text = serializer.validated_data.get('text', '[Screenshot Uploaded]')
+        image = serializer.validated_data.get('image')
+        audio = serializer.validated_data.get('audio')
+        text = serializer.validated_data.get('text', '')
+
+        if not text:
+            if image: text = "[Screenshot Uploaded]"
+            elif audio: text = "[Audio Uploaded]"
 
         try:
             msg = Message.objects.create(
@@ -220,7 +219,8 @@ class ChatSessionImageUploadView(APIView):
                 sender=request.user,
                 is_ai=False,
                 text=text,
-                image=image
+                image=image,
+                audio=audio
             )
             
             session.update_preview()
@@ -228,22 +228,25 @@ class ChatSessionImageUploadView(APIView):
             if not request.user.is_premium:
                 cache.set(cache_key, upload_count + 1, 3600)
             
-            analyze_screenshot_task.delay(msg.id)
+            if image:
+                analyze_screenshot_task.delay(msg.id)
+            if audio:
+                transcribe_audio_task.delay(msg.id)
             
             cache.delete(f"chat_history:{conversation_id}")
             
             return Response(
                 {
-                    "message": "Image uploaded successfully",
+                    "message": "File uploaded successfully",
                     "data": MessageSerializer(msg, context={'request': request}).data
                 },
                 status=status.HTTP_201_CREATED
             )
             
         except Exception as e:
-            logger.error(f"Image upload error for user {request.user.id}: {e}", exc_info=True)
+            logger.error(f"Upload error for user {request.user.id}: {e}", exc_info=True)
             return Response(
-                {"error": "Failed to upload image. Please try again."},
+                {"error": "Failed to upload file. Please try again."},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
@@ -261,15 +264,8 @@ class ChatStatsView(APIView):
             total_messages=Count('messages')
         )
         
-        user_messages = Message.objects.filter(
-            sender=user,
-            is_ai=False
-        ).count()
-        
-        ai_messages = Message.objects.filter(
-            session__user=user,
-            is_ai=True
-        ).count()
+        user_messages = Message.objects.filter(sender=user, is_ai=False).count()
+        ai_messages = Message.objects.filter(session__user=user, is_ai=True).count()
         
         total_tokens = 0
         if user.is_premium:
