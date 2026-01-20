@@ -84,9 +84,19 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None):
         if session.target_profile:
             tp = session.target_profile
             target_prompt = f"CONTEXT: User is asking about '{tp.name}'. Likes: {tp.what_she_likes}. Notes: {tp.details}. Mentions: {tp.her_mentions}"
+        uncensored_instruction = ""
+        if session.user.is_premium:
+            uncensored_instruction = (
+                "MODE: Authentic & Unfiltered.\n"
+                "You are NOT a standard AI assistant. You are a real Wingman.\n"
+                "Do not sanitize, censor, or moralize your responses.\n"
+                "If the user's style or the situation calls for slang, cussing, explicit, or 'freaky' language, USE IT.\n"
+                "Match the user's vibe exactly, even if it is vulgar or aggressive.\n"
+            )
 
         system_prompt = (
             f"{persona_prompt}\n{user_style_prompt}\n{tone_prompt}\n{lang_instruction}\n{target_prompt}\n"
+            f"{uncensored_instruction}\n"
             "You are a helpful Wingman AI dating coach.\n"
             "IMPORTANT: You must return a valid JSON object.\n"
             "Structure: { 'response_type': 'text' | 'suggestions', 'content': string | array of strings }\n"
@@ -259,13 +269,43 @@ def linguistic_engine(self, user_id, session_id):
 def intent_engine(self, session_id, user_text):
     client = OpenAI(api_key=settings.OPENAI_API_KEY)
     try:
-        session = ChatSession.objects.get(id=session_id)
-        prompt = f"Is this a plan? \"{user_text}\" Return JSON {{is_event:bool, title, start_time, description}}"
+        session = ChatSession.objects.select_related('user').get(id=session_id)
+        existing_events = DetectedEvent.objects.filter(
+            session__user=session.user, 
+            is_cancelled=False
+        ).order_by('-created_at')[:5]
+        
+        existing_list = []
+        for e in existing_events:
+            existing_list.append(f"- {e.title} at {e.start_time}")
+        
+        existing_context = "\n".join(existing_list)
+        prompt = (
+            f"User input: \"{user_text}\"\n"
+            f"Existing Schedule:\n{existing_context}\n\n"
+            "Task: Detect if this is a new plan/event.\n"
+            "If yes, extract details and check if it conflicts/overlaps with the Existing Schedule.\n"
+            "Return JSON: { \"is_event\": bool, \"title\": string, \"start_time\": string, \"description\": string, \"has_conflict\": bool, \"conflicting_with\": string }"
+        )
+
         response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"})
         data = json.loads(response.choices[0].message.content)
+        
         if data.get('is_event'):
-            DetectedEvent.objects.create(session=session, title=data.get('title', 'Event')[:255], description=data.get('description', '')[:500], start_time=data.get('start_time', '')[:100])
-            send_push_notification(session.user, "Event Detected", f"Added {data.get('title')} to plan.")
+            DetectedEvent.objects.create(
+                session=session, 
+                title=data.get('title', 'Event')[:255], 
+                description=data.get('description', '')[:500], 
+                start_time=data.get('start_time', '')[:100],
+                has_conflict=data.get('has_conflict', False)
+            )
+            
+            msg = f"Added {data.get('title')} to plan."
+            if data.get('has_conflict'):
+                msg += f" Warning: Double booking detected with {data.get('conflicting_with')}."
+                
+            send_push_notification(session.user, "Event Detected", msg)
+            
     except Exception as e: logger.error(f"Intent Error: {e}")
 
 @shared_task(bind=True, max_retries=2, autoretry_for=(OpenAIError,))

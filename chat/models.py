@@ -114,6 +114,7 @@ class DetectedEvent(models.Model):
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     is_confirmed = models.BooleanField(default=False)
     is_cancelled = models.BooleanField(default=False)
+    has_conflict = models.BooleanField(default=False)
 
     class Meta:
         verbose_name = "Detected Event"
