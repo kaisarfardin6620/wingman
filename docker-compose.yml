@@ -42,6 +42,21 @@ services:
       - redis
     command: celery -A wingman worker --loglevel=info
 
+  celery-beat:
+    build: .
+    container_name: wingman_beat
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - RUNNING_IN_DOCKER=true
+    volumes:
+      - ./media:/app/media
+      - ./logs:/app/logs
+    depends_on:
+      - redis
+    command: celery -A wingman beat --loglevel=info
+
   redis:
     image: redis:7-alpine
     container_name: wingman_redis
