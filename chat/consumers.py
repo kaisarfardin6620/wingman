@@ -1,5 +1,5 @@
 import json
-import logging
+import structlog
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.contrib.auth import get_user_model
@@ -8,9 +8,10 @@ from django.core.cache import cache
 from core.models import TargetProfile, GlobalConfig
 from .models import ChatSession, Message
 from .tasks import generate_ai_response, generate_chat_title
+from wingman.constants import CACHE_TTL_CHAT_SESSION, CACHE_TTL_CHAT_HISTORY, CACHE_TTL_GLOBAL_CONFIG
 
 User = get_user_model()
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 class ChatConsumer(AsyncWebsocketConsumer):
     async def connect(self):
@@ -128,7 +129,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         if cached: return cached
         try:
             session = ChatSession.objects.select_related('user', 'target_profile').get(conversation_id=conversation_id, user=self.user)
-            cache.set(cache_key, session, 300)
+            cache.set(cache_key, session, CACHE_TTL_CHAT_SESSION)
             return session
         except ChatSession.DoesNotExist: return None
 
@@ -148,7 +149,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 'ocr_text': msg.ocr_extracted_text,
                 'created_at': str(msg.created_at)
             })
-        cache.set(cache_key, history_data, 120)
+        cache.set(cache_key, history_data, CACHE_TTL_CHAT_HISTORY)
         return history_data
 
     @database_sync_to_async
@@ -158,7 +159,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         config = cache.get(cache_key)
         if not config:
             config = GlobalConfig.load()
-            cache.set(cache_key, config, 3600)
+            cache.set(cache_key, config, CACHE_TTL_GLOBAL_CONFIG)
         
         if len(text) > config.max_chat_length:
             return f"Message too long. Free limit is {config.max_chat_length} characters."
@@ -183,6 +184,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             try: target = TargetProfile.objects.get(id=target_id, user=self.user)
             except TargetProfile.DoesNotExist: pass
         session = ChatSession.objects.create(user=self.user, target_profile=target)
+        logger.info("ws_session_created", user_id=self.user.id, session_id=session.id)
         return session, True
 
     @database_sync_to_async

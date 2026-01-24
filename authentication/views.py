@@ -1,15 +1,12 @@
-import logging
+import structlog
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.parsers import MultiPartParser, FormParser
-from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework_simplejwt.exceptions import TokenError
-from rest_framework_simplejwt.token_blacklist.models import OutstandingToken, BlacklistedToken
 from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
-from django.db import transaction
 from django.core.cache import cache
+from drf_spectacular.utils import extend_schema, OpenApiParameter
 from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
 from allauth.socialaccount.providers.oauth2.client import OAuth2Client
 from allauth.socialaccount.providers.apple.views import AppleOAuth2Adapter
@@ -17,11 +14,11 @@ from allauth.socialaccount.providers.apple.client import AppleOAuth2Client
 from allauth.socialaccount.models import SocialLogin
 from core.utils import send_push_notification
 from .serializers import *
-from .models import User
-from .utils import generate_otp, send_otp_via_email, verify_otp_via_email, send_otp_email_task
-from django.utils import timezone
+from .services import AuthService
+from .utils import send_otp_via_email
+from wingman.constants import CACHE_TTL_USER_PROFILE
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 class OTPRateThrottle(AnonRateThrottle):
     scope = 'otp' 
@@ -29,182 +26,124 @@ class OTPRateThrottle(AnonRateThrottle):
 class RegisterView(APIView):
     throttle_classes = [AnonRateThrottle]
 
+    @extend_schema(
+        request=SignupSerializer,
+        responses={201: dict},
+        summary="Register New User"
+    )
     def post(self, request):
         serializer = SignupSerializer(data=request.data)
         if serializer.is_valid():
             try:
-                with transaction.atomic():
-                    user = serializer.save()
-                    success, message = send_otp_via_email(user.email)
-                    
-                    if success:
-                        return Response({
-                            "message": "Account created. OTP sent to your email.",
-                            "email": user.email
-                        }, status=status.HTTP_201_CREATED)
-                    else:
-                        raise Exception(message)
-                        
+                result = AuthService.register_user(serializer.validated_data)
+                return Response(result, status=status.HTTP_201_CREATED)
             except Exception as e:
-                logger.error(f"Registration failed for {request.data.get('email')}: {str(e)}")
                 return Response(
                     {"error": "Registration failed. Please try again later."}, 
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
-        
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class VerifyOTPView(APIView):
     throttle_classes = [OTPRateThrottle]
 
+    @extend_schema(
+        request=VerifyOTPSerializer,
+        responses={200: dict},
+        summary="Verify Account OTP"
+    )
     def post(self, request):
         serializer = VerifyOTPSerializer(data=request.data)
         if serializer.is_valid():
-            email = serializer.validated_data['email']
-            otp = serializer.validated_data['otp']
-            
-            success, message = verify_otp_via_email(email, otp)
-            
+            success, message = AuthService.verify_otp(
+                serializer.validated_data['email'], 
+                serializer.validated_data['otp']
+            )
             if success:
-                try:
-                    user = User.objects.get(email=email)
-                    if not user.is_active:
-                        user.is_active = True
-                        user.save(update_fields=['is_active'])
-                    
-                    tokens = user.tokens
-                    
-                    return Response({
-                        "message": "Verification successful",
-                    }, status=status.HTTP_200_OK)
-                    
-                except User.DoesNotExist:
-                    return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-            else:
-                return Response({"error": message}, status=status.HTTP_400_BAD_REQUEST)
-            
+                return Response({"message": message}, status=status.HTTP_200_OK)
+            return Response({"error": message}, status=status.HTTP_400_BAD_REQUEST)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class LoginView(APIView):
     throttle_classes = [AnonRateThrottle]
 
+    @extend_schema(
+        request=LoginSerializer,
+        responses={200: dict},
+        summary="Login User"
+    )
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        email = serializer.validated_data['email']
-        password = serializer.validated_data['password']
-        cache_key = f"login_attempts:{email}"
-        attempts = cache.get(cache_key, 0)
+        data, error_msg, status_code = AuthService.login_user(
+            serializer.validated_data['email'], 
+            serializer.validated_data['password']
+        )
         
-        if attempts >= 5:
-            return Response(
-                {"error": "Account temporarily locked. Try again in 15 minutes."},
-                status=status.HTTP_429_TOO_MANY_REQUESTS
-            )
-
-        try:
-            user = User.objects.get(email=email)
-        except User.DoesNotExist:
-            cache.set(cache_key, attempts + 1, 900)
-            return Response({"error": "Invalid credentials."}, status=status.HTTP_401_UNAUTHORIZED)
-
-        if not user.check_password(password):
-            cache.set(cache_key, attempts + 1, 900)
-            return Response({"error": "Invalid credentials."}, status=status.HTTP_401_UNAUTHORIZED)
-
-        if not user.is_active:
-            success, message = send_otp_via_email(email)
-            return Response({"error": "Account not active. OTP sent to email."}, status=status.HTTP_403_FORBIDDEN)
-        
-        cache.delete(cache_key)
-        send_push_notification(user, "New Login", "Your account was just accessed.")
-
-        tokens = user.tokens
-        return Response({
-            "message": "Successfully logged in.",
-            "token": tokens['access'],
-            "refresh_token": tokens['refresh'],
-            "user_id": user.id,
-        }, status=status.HTTP_200_OK)
-
-
+        if error_msg:
+            return Response({"error": error_msg}, status=status_code)
+            
+        return Response(data, status=status.HTTP_200_OK)
 
 class ResendOTPView(APIView):
     throttle_classes = [OTPRateThrottle]
 
+    @extend_schema(
+        request=ResendOTPSerializer,
+        responses={200: dict},
+        summary="Resend Verification OTP"
+    )
     def post(self, request):
         serializer = ResendOTPSerializer(data=request.data)
         if serializer.is_valid():
             email = serializer.validated_data['email']
-            
             if not User.objects.filter(email=email).exists():
                 return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
 
             success, message = send_otp_via_email(email)
-            
             if success:
                 return Response({"message": message}, status=status.HTTP_200_OK)
-            else:
-                return Response({"error": message}, status=status.HTTP_400_BAD_REQUEST)
-                
+            return Response({"error": message}, status=status.HTTP_400_BAD_REQUEST)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class ForgotPasswordView(APIView):
     throttle_classes = [OTPRateThrottle]
 
+    @extend_schema(
+        request=ForgotPasswordSerializer,
+        responses={200: dict},
+        summary="Request Password Reset"
+    )
     def post(self, request):
         serializer = ForgotPasswordSerializer(data=request.data)
         if serializer.is_valid():
-            email = serializer.validated_data['email']
-            
-            try:
-                user = User.objects.get(email=email)
-                success, message = send_otp_via_email(email)
-                
-                if success:
-                    send_push_notification(user, "Password Reset", "An OTP was sent to reset your password.")
-                    
-                    return Response({"message": "OTP sent for password reset."}, status=status.HTTP_200_OK)
-                else:
-                    return Response({"error": message}, status=status.HTTP_400_BAD_REQUEST)
-            except User.DoesNotExist:
-                return Response({"message": "If the email exists, an OTP has been sent."}, status=status.HTTP_200_OK)
-                
+            success, message = AuthService.forgot_password(serializer.validated_data['email'])
+            if success:
+                return Response({"message": message}, status=status.HTTP_200_OK)
+            return Response({"error": message}, status=status.HTTP_400_BAD_REQUEST)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class ResetPasswordConfirmView(APIView):
     throttle_classes = [OTPRateThrottle]
 
+    @extend_schema(
+        request=ResetPasswordSerializer,
+        responses={200: dict},
+        summary="Confirm Password Reset"
+    )
     def post(self, request):
         serializer = ResetPasswordSerializer(data=request.data)
         if serializer.is_valid():
-            email = serializer.validated_data['email']
-            otp = serializer.validated_data['otp']
-            new_pass = serializer.validated_data['new_password']
-
-            success, message = verify_otp_via_email(email, otp)
-            
+            success, message = AuthService.reset_password(
+                serializer.validated_data['email'],
+                serializer.validated_data['otp'],
+                serializer.validated_data['new_password']
+            )
             if success:
-                try:
-                    with transaction.atomic():
-                        user = User.objects.get(email=email)
-                        user.set_password(new_pass)
-                        user.save(update_fields=['password'])
-                        tokens = OutstandingToken.objects.filter(user=user)
-                        for token in tokens:
-                            BlacklistedToken.objects.get_or_create(token=token)
-
-                    send_push_notification(user, "Security Alert", "Your password has been changed successfully.")
-
-                    return Response({"message": "Password reset successfully. All sessions logged out."}, status=status.HTTP_200_OK)
-                    
-                except User.DoesNotExist:
-                    return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-            else:
-                return Response({"error": message}, status=status.HTTP_400_BAD_REQUEST)
-                
+                return Response({"message": message}, status=status.HTTP_200_OK)
+            return Response({"error": message}, status=status.HTTP_400_BAD_REQUEST)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class UserProfileView(APIView):
@@ -212,63 +151,45 @@ class UserProfileView(APIView):
     parser_classes = [MultiPartParser, FormParser]
     throttle_classes = [UserRateThrottle]
 
+    @extend_schema(
+        responses={200: UserProfileSerializer},
+        summary="Get User Profile"
+    )
     def get(self, request):
         cache_key = f"user_profile:{request.user.id}"
         cached_data = cache.get(cache_key)
-        
         if cached_data:
             return Response(cached_data, status=status.HTTP_200_OK)
         
         serializer = UserProfileSerializer(request.user, context={'request': request})
-        cache.set(cache_key, serializer.data, 300)
-        
+        cache.set(cache_key, serializer.data, CACHE_TTL_USER_PROFILE)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
+    @extend_schema(
+        summary="Update User Profile",
+        request={'multipart/form-data': UserProfileSerializer},
+        responses={200: UserProfileSerializer},
+    )
     def patch(self, request):
-        user = request.user
-        data = request.data.copy()
-        
-        new_email = data.get('email', '').strip().lower()
-        email_changed = False
-        
-        if new_email and new_email != user.email:
-            if User.objects.filter(email=new_email).exists():
-                return Response({"email": ["This email is already in use."]}, status=status.HTTP_400_BAD_REQUEST)
-            
-            email_changed = True
-            if 'email' in data:
-                del data['email']
-
         serializer = UserProfileSerializer(
-            user, 
-            data=data, 
+            request.user, 
+            data=request.data, 
             partial=True, 
             context={'request': request}
         )
         
         if serializer.is_valid():
-            serializer.save()
+            result, error = AuthService.update_profile(request.user, serializer.validated_data)
             
-            cache.delete(f"user_profile:{user.id}")
+            if error:
+                 return Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
             
-            response_data = {
-                "message": "Profile updated successfully",
-                "data": serializer.data
-            }
+            response_serializer = UserProfileSerializer(request.user, context={'request': request})
+            
+            response_data = result
+            response_data['data'] = response_serializer.data
+            if 'user' in response_data: del response_data['user']
 
-            if email_changed:
-                otp_code = generate_otp()
-                
-                cache_key = f"email_change_request:{user.id}"
-                cache.set(cache_key, {'new_email': new_email, 'otp': otp_code}, 600)
-                
-                send_otp_email_task.delay(new_email, otp_code)
-                
-                response_data['message'] = "Profile updated. Please verify the OTP sent to your new email to complete the change."
-                response_data['email_verification_required'] = True
-
-            send_push_notification(request.user, "Profile Updated", "Your profile details have been updated.")
-            
             return Response(response_data, status=status.HTTP_200_OK)
             
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -277,6 +198,11 @@ class GoogleLoginView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [AnonRateThrottle]
     
+    @extend_schema(
+        request=dict,
+        responses={200: dict},
+        summary="Google Login"
+    )
     def post(self, request):
         try:
             access_token = request.data.get("access_token")
@@ -305,6 +231,7 @@ class GoogleLoginView(APIView):
             
             user = login.user
             send_push_notification(user, "New Login", "Logged in via Google.")
+            logger.info("google_login_success", user_id=user.id)
             
             tokens = user.tokens
             return Response({
@@ -315,13 +242,18 @@ class GoogleLoginView(APIView):
             }, status=status.HTTP_200_OK)
             
         except Exception as e:
-            logger.error(f"Google Login Failed: {str(e)}", exc_info=True)
+            logger.error("google_login_failed", error=str(e))
             return Response({"detail": "Google authentication failed"}, status=status.HTTP_400_BAD_REQUEST)
 
 class AppleLoginView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [AnonRateThrottle]
     
+    @extend_schema(
+        request=dict,
+        responses={200: dict},
+        summary="Apple Login"
+    )
     def post(self, request):
         try:
             access_token = request.data.get("access_token")
@@ -356,6 +288,7 @@ class AppleLoginView(APIView):
             
             user = login.user
             send_push_notification(user, "New Login", "Logged in via Apple.")
+            logger.info("apple_login_success", user_id=user.id)
             
             tokens = user.tokens
             return Response({
@@ -366,13 +299,18 @@ class AppleLoginView(APIView):
             }, status=status.HTTP_200_OK)
             
         except Exception as e:
-            logger.error(f"Apple Login Failed: {str(e)}", exc_info=True)
+            logger.error("apple_login_failed", error=str(e))
             return Response({"detail": "Apple authentication failed"}, status=status.HTTP_400_BAD_REQUEST)
         
 class ChangePasswordView(APIView):
     permission_classes = [IsAuthenticated]
     throttle_classes = [UserRateThrottle]
 
+    @extend_schema(
+        request=UserChangePasswordSerializer,
+        responses={200: dict},
+        summary="Change Password"
+    )
     def post(self, request):
         serializer = UserChangePasswordSerializer(data=request.data, context={'request': request})
         
@@ -385,6 +323,7 @@ class ChangePasswordView(APIView):
             update_session_auth_hash(request, user)
             
             send_push_notification(user, "Security Alert", "Your password was changed.")
+            logger.info("password_change_success", user_id=user.id)
             
             return Response({"message": "Password changed successfully."}, status=status.HTTP_200_OK)
             
@@ -394,6 +333,11 @@ class VerifyEmailChangeView(APIView):
     permission_classes = [IsAuthenticated]
     throttle_classes = [UserRateThrottle]
 
+    @extend_schema(
+        request=EmailChangeVerifySerializer,
+        responses={200: dict},
+        summary="Verify Email Change OTP"
+    )
     def post(self, request):
         serializer = EmailChangeVerifySerializer(data=request.data)
         if serializer.is_valid():
@@ -412,6 +356,7 @@ class VerifyEmailChangeView(APIView):
             cache.delete(cache_key)
             cache.delete(f"user_profile:{user.id}")
             
+            logger.info("email_change_verified", user_id=user.id)
             return Response({"message": "Email updated successfully."}, status=status.HTTP_200_OK)
             
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)  
@@ -420,22 +365,27 @@ class DeleteAccountView(APIView):
     permission_classes = [IsAuthenticated]
     throttle_classes = [UserRateThrottle]
 
+    @extend_schema(
+        request=DeleteAccountSerializer,
+        responses={200: dict},
+        summary="Delete Account"
+    )
     def delete(self, request):
         serializer = DeleteAccountSerializer(data=request.data, context={'request': request})
         
         if serializer.is_valid():
             user = request.user
-            
             try:
                 with transaction.atomic():
                     cache.delete(f"user_profile:{user.id}")
                     cache.delete(f"user_settings:{user.id}")
                     user.delete()
 
+                logger.info("account_deleted", user_id=user.id)
                 return Response({"message": "Account permanently deleted."}, status=status.HTTP_200_OK)
                 
             except Exception as e:
-                logger.error(f"Error deleting account {user.id}: {e}")
+                logger.error("delete_account_failed", user_id=user.id, error=str(e))
                 return Response({"error": "Something went wrong."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)   
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

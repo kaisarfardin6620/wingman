@@ -1,16 +1,17 @@
+import structlog
 from rest_framework import viewsets, mixins, parsers, status, filters
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.throttling import UserRateThrottle, AnonRateThrottle
+from rest_framework.throttling import UserRateThrottle
 from django.core.cache import cache
-from django.db.models import Prefetch, Count, Max
+from django.db.models import Max, Count
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
 from django.shortcuts import get_object_or_404
-import logging
-from core.models import GlobalConfig
+from drf_spectacular.utils import extend_schema
+
 from .models import ChatSession, Message
 from .serializers import (
     ChatSessionListSerializer,
@@ -19,18 +20,16 @@ from .serializers import (
     MessageSerializer,
     MessageUploadSerializer
 )
-from .tasks import analyze_screenshot_task, transcribe_audio_task
+from .services import ChatService
+from wingman.constants import CACHE_TTL_CHAT_DETAIL, CACHE_TTL_CHAT_HISTORY
 
-logger = logging.getLogger(__name__)
-
+logger = structlog.get_logger(__name__)
 
 class ChatThrottle(UserRateThrottle):
     scope = 'chat'
 
-
 class UploadThrottle(UserRateThrottle):
     scope = 'user'
-
 
 class ChatSessionViewSet(viewsets.GenericViewSet,
                          mixins.ListModelMixin,
@@ -44,6 +43,9 @@ class ChatSessionViewSet(viewsets.GenericViewSet,
     search_fields = ['title', 'messages__text']
 
     def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return ChatSession.objects.none()
+            
         return ChatSession.objects.filter(
             user=self.request.user
         ).select_related(
@@ -84,21 +86,12 @@ class ChatSessionViewSet(viewsets.GenericViewSet,
         
         instance = self.get_object()
         serializer = self.get_serializer(instance)
-        
-        cache.set(cache_key, serializer.data, 120)
-        
+        cache.set(cache_key, serializer.data, CACHE_TTL_CHAT_DETAIL)
         return Response(serializer.data)
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
-        conversation_id = instance.conversation_id
-        
-        instance.delete()
-        
-        cache.delete(f"chat_session:{conversation_id}:{request.user.id}")
-        cache.delete(f"chat_session_detail:{conversation_id}:{request.user.id}")
-        cache.delete(f"chat_history:{conversation_id}")
-        
+        ChatService.delete_session(instance, request.user.id)
         return Response(
             {"message": "Chat session deleted successfully"},
             status=status.HTTP_204_NO_CONTENT
@@ -107,60 +100,38 @@ class ChatSessionViewSet(viewsets.GenericViewSet,
     @action(detail=True, methods=['get'])
     def history(self, request, conversation_id=None):
         cache_key = f"chat_history:{conversation_id}"
-        
         cached_data = cache.get(cache_key)
         if cached_data:
             return Response(cached_data)
         
         session = self.get_object()
-        
         messages = session.messages.only(
             'id', 'is_ai', 'text', 'image', 'audio',
             'ocr_extracted_text', 'tokens_used', 'created_at'
         ).order_by('created_at')
         
-        serializer = MessageSerializer(
-            messages,
-            many=True,
-            context={'request': request}
-        )
-        
-        cache.set(cache_key, serializer.data, 120)
-        
+        serializer = MessageSerializer(messages, many=True, context={'request': request})
+        cache.set(cache_key, serializer.data, CACHE_TTL_CHAT_HISTORY)
         return Response(serializer.data)
 
     @action(detail=True, methods=['patch'], throttle_classes=[ChatThrottle])
     def rename(self, request, conversation_id=None):
         session = self.get_object()
         serializer = self.get_serializer(session, data=request.data, partial=True)
-        
         if serializer.is_valid():
             serializer.save()
-            
             cache.delete(f"chat_session:{conversation_id}:{request.user.id}")
             cache.delete(f"chat_session_detail:{conversation_id}:{request.user.id}")
-            
             return Response({
                 "message": "Chat renamed successfully",
                 "title": serializer.data['title']
             })
-        
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=False, methods=['delete'])
     def clear_all(self, request):
-        user_sessions = ChatSession.objects.filter(user=request.user)
-        conversation_ids = list(user_sessions.values_list('conversation_id', flat=True))
-        deleted_count, _ = user_sessions.delete()
-        
-        for conv_id in conversation_ids:
-            cache.delete(f"chat_session:{conv_id}:{request.user.id}")
-            cache.delete(f"chat_session_detail:{conv_id}:{request.user.id}")
-            cache.delete(f"chat_history:{conv_id}")
-        
-        return Response({
-            "message": f"Deleted {deleted_count} chat sessions"
-        }, status=status.HTTP_200_OK)
+        count = ChatService.clear_all_sessions(request.user)
+        return Response({"message": f"Deleted {count} chat sessions"}, status=status.HTTP_200_OK)
 
 
 class ChatSessionImageUploadView(APIView):
@@ -168,6 +139,11 @@ class ChatSessionImageUploadView(APIView):
     parser_classes = [parsers.MultiPartParser, parsers.FormParser]
     throttle_classes = [UploadThrottle]
 
+    @extend_schema(
+        summary="Upload Media to Chat",
+        request={'multipart/form-data': MessageUploadSerializer},
+        responses={201: MessageSerializer},
+    )
     def post(self, request, conversation_id):
         try:
             session = ChatSession.objects.get(
@@ -180,75 +156,21 @@ class ChatSessionImageUploadView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        if not request.user.is_premium:
-            from django.utils import timezone
-            today = timezone.now().date()
-            cache_key = f"upload_count:{request.user.id}:{today}"
-            upload_count = cache.get(cache_key)
-            
-            if upload_count is None:
-                upload_count = Message.objects.filter(
-                    sender=request.user,
-                    created_at__date=today,
-                    image__isnull=False
-                ).count()
-                cache.set(cache_key, upload_count, 3600)
-            
-            config = GlobalConfig.load()
-            if upload_count >= config.ocr_limit:
-                return Response(
-                    {"error": f"Daily upload limit reached ({config.ocr_limit}/day). Upgrade to Premium for unlimited uploads."},
-                    status=status.HTTP_429_TOO_MANY_REQUESTS
-                )
-
         serializer = MessageUploadSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        image = serializer.validated_data.get('image')
-        audio = serializer.validated_data.get('audio')
-        text = serializer.validated_data.get('text', '')
-
-        if not text:
-            if image: text = "[Screenshot Uploaded]"
-            elif audio: text = "[Audio Uploaded]"
-
-        try:
-            msg = Message.objects.create(
-                session=session,
-                sender=request.user,
-                is_ai=False,
-                text=text,
-                image=image,
-                audio=audio
-            )
+        data, error = ChatService.handle_file_upload(
+            request.user, 
+            session, 
+            serializer.validated_data, 
+            request_context={'request': request}
+        )
+        
+        if error:
+            return Response({"error": error}, status=status.HTTP_429_TOO_MANY_REQUESTS)
             
-            session.update_preview()
-            
-            if not request.user.is_premium:
-                cache.set(cache_key, upload_count + 1, 3600)
-            
-            if image:
-                analyze_screenshot_task.delay(msg.id)
-            if audio:
-                transcribe_audio_task.delay(msg.id)
-            
-            cache.delete(f"chat_history:{conversation_id}")
-            
-            return Response(
-                {
-                    "message": "File uploaded successfully",
-                    "data": MessageSerializer(msg, context={'request': request}).data
-                },
-                status=status.HTTP_201_CREATED
-            )
-            
-        except Exception as e:
-            logger.error(f"Upload error for user {request.user.id}: {e}", exc_info=True)
-            return Response(
-                {"error": "Failed to upload file. Please try again."},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        return Response({"message": "File uploaded successfully", "data": data}, status=status.HTTP_201_CREATED)
 
 
 class ChatStatsView(APIView):
@@ -256,9 +178,9 @@ class ChatStatsView(APIView):
     throttle_classes = [UserRateThrottle]
 
     @method_decorator(cache_page(300))
+    @extend_schema(summary="Get User Chat Stats", responses={200: dict})
     def get(self, request):
         user = request.user
-        
         stats = ChatSession.objects.filter(user=user).aggregate(
             total_sessions=Count('id'),
             total_messages=Count('messages')

@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from drf_spectacular.utils import extend_schema_field
 from .models import ChatSession, Message, DetectedEvent
 from core.serializers import TargetProfileSerializer
 
@@ -21,6 +22,7 @@ class ChatSessionListSerializer(serializers.ModelSerializer):
         model = ChatSession
         fields = ['conversation_id', 'title', 'target_profile', 'last_message', 'events', 'updated_at']
 
+    @extend_schema_field(serializers.CharField(allow_null=True))
     def get_last_message(self, obj):
         last_msg = obj.messages.last()
         if last_msg:

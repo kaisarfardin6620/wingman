@@ -1,7 +1,6 @@
 from django.utils import timezone
 from django.db import transaction
-from django.db.models.functions import TruncMonth
-from django.db.models import Count, Q
+from django.db.models import Q
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.utils.decorators import method_decorator
@@ -12,6 +11,8 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAdminUser
 from rest_framework.decorators import action
 from rest_framework.throttling import UserRateThrottle
+from drf_spectacular.utils import extend_schema
+
 from core.models import Tone, Persona, GlobalConfig
 from core.utils import send_push_notification
 from .serializers import (
@@ -20,12 +21,12 @@ from .serializers import (
     GlobalConfigSerializer, AdminProfileUpdateSerializer,
     ChangePasswordSerializer
 )
-import logging
-from authentication.utils import generate_otp
+from .services import DashboardService
 from authentication.tasks import send_otp_email_task
+from authentication.utils import generate_otp
+from wingman.constants import CACHE_TTL_GLOBAL_CONFIG
 
 User = get_user_model()
-logger = logging.getLogger(__name__)
 
 class AdminThrottle(UserRateThrottle):
     scope = 'user'
@@ -35,33 +36,9 @@ class DashboardAnalyticsView(APIView):
     throttle_classes = [AdminThrottle]
 
     @method_decorator(cache_page(60))
+    @extend_schema(summary="Get Dashboard Analytics", responses={200: DashboardStatsSerializer})
     def get(self, request):
-        user_stats = User.objects.aggregate(
-            total=Count('id'),
-            premium=Count('id', filter=Q(is_premium=True)),
-            active=Count('id', filter=Q(is_active=True))
-        )
-        total_users = user_stats['total']
-        premium_users = user_stats['premium']
-        free_users = total_users - premium_users
-        active_today = User.objects.filter(last_login__date=timezone.now().date()).count()
-        conversion_rate = round((premium_users / total_users * 100), 2) if total_users > 0 else 0
-        
-        twelve_months_ago = timezone.now() - timezone.timedelta(days=365)
-        monthly_data = (
-            User.objects.filter(date_joined__gte=twelve_months_ago)
-            .annotate(month=TruncMonth('date_joined'))
-            .values('month')
-            .annotate(count=Count('id'))
-            .order_by('month')
-        )
-        graph_data = [{"month": e['month'].strftime('%b %Y'), "count": e['count']} for e in monthly_data if e['month']]
-
-        data = {
-            "total_users": total_users, "active_today": active_today,
-            "premium_users": premium_users, "free_users": free_users,
-            "conversion_rate": conversion_rate, "graph_data": graph_data
-        }
+        data = DashboardService.get_analytics()
         return Response(DashboardStatsSerializer(data).data)
 
 class AdminUserViewSet(viewsets.ModelViewSet):
@@ -103,15 +80,12 @@ class AdminUserViewSet(viewsets.ModelViewSet):
         import secrets
         from django.core.mail import send_mail
         from django.conf import settings
-
         user = self.get_object()
         new_pass = secrets.token_urlsafe(10) 
-        
         try:
             with transaction.atomic():
                 user.set_password(new_pass)
                 user.save(update_fields=['password'])
-                
                 send_mail(
                     subject="Your Password has been Reset by Admin",
                     message=f"Hello {user.name or 'User'},\n\nYour Admin has reset your password.\n\nTemporary Password: {new_pass}\n\nPlease log in and change this immediately.",
@@ -121,7 +95,6 @@ class AdminUserViewSet(viewsets.ModelViewSet):
                 )
         except Exception as e:
             return Response({"error": f"Failed to reset password: {str(e)}"}, status=500)
-        
         send_push_notification(user, "Security Alert", "Admin reset your password. Check your email.")
         return Response({"message": f"Password reset. Email sent to {user.email}"})
 
@@ -149,9 +122,11 @@ class GlobalConfigView(APIView):
     permission_classes = [IsAdminUser]
     throttle_classes = [AdminThrottle]
 
+    @extend_schema(summary="Get System Limits", responses={200: GlobalConfigSerializer})
     def get(self, request):
         return Response(GlobalConfigSerializer(GlobalConfig.load()).data)
 
+    @extend_schema(summary="Update System Limits", request=GlobalConfigSerializer, responses={200: GlobalConfigSerializer})
     def post(self, request):
         config = GlobalConfig.load()
         serializer = GlobalConfigSerializer(config, data=request.data, partial=True)
@@ -164,77 +139,56 @@ class AdminProfileView(APIView):
     permission_classes = [IsAdminUser]
     throttle_classes = [UserRateThrottle]
 
+    @extend_schema(summary="Get Admin Profile", responses={200: AdminProfileUpdateSerializer})
     def get(self, request):
         cache_key = f"user_profile:{request.user.id}"
         cached_data = cache.get(cache_key)
-        
-        if cached_data:
-            return Response(cached_data)
-
+        if cached_data: return Response(cached_data)
         serializer = AdminProfileUpdateSerializer(request.user, context={'request': request})
         cache.set(cache_key, serializer.data, 300)
         return Response(serializer.data)
 
+    @extend_schema(
+        summary="Update Admin Profile",
+        request={'multipart/form-data': AdminProfileUpdateSerializer},
+        responses={200: AdminProfileUpdateSerializer},
+    )
     def patch(self, request):
         user = request.user
         data = request.data.copy()
-        
         new_email = data.get('email', '').strip().lower()
         email_changed = False
-        
         if new_email and new_email != user.email:
             if User.objects.exclude(pk=user.pk).filter(email=new_email).exists():
                 return Response({"email": ["This email is already in use."]}, status=status.HTTP_400_BAD_REQUEST)
-            
             email_changed = True
-            if 'email' in data:
-                del data['email']
-
-        serializer = AdminProfileUpdateSerializer(
-            user, 
-            data=data, 
-            partial=True, 
-            context={'request': request}
-        )
-        
+            if 'email' in data: del data['email']
+        serializer = AdminProfileUpdateSerializer(user, data=data, partial=True, context={'request': request})
         if serializer.is_valid():
             serializer.save()
-            
             cache.delete(f"user_profile:{user.id}")
-            
-            response_data = {
-                "message": "Updated successfully", 
-                "data": serializer.data
-            }
-
+            response_data = {"message": "Updated successfully", "data": serializer.data}
             if email_changed:
                 otp_code = generate_otp()
-                
-                cache_key = f"email_change_request:{user.id}"
-                cache.set(cache_key, {'new_email': new_email, 'otp': otp_code}, 600)
-                
+                cache.set(f"email_change_request:{user.id}", {'new_email': new_email, 'otp': otp_code}, 600)
                 send_otp_email_task.delay(new_email, otp_code)
-                
                 response_data['message'] = "Profile updated. Please verify the OTP sent to your new email."
                 response_data['email_verification_required'] = True
-
             return Response(response_data, status=status.HTTP_200_OK)
-            
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class AdminChangePasswordView(APIView):
     permission_classes = [IsAdminUser]
     throttle_classes = [UserRateThrottle]
-
+    
+    @extend_schema(summary="Admin Change Password", request=ChangePasswordSerializer, responses={200: dict})
     def post(self, request):
         serializer = ChangePasswordSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
             user = request.user
             user.set_password(serializer.validated_data['new_password'])
             user.save()
-            
             from django.contrib.auth import update_session_auth_hash
             update_session_auth_hash(request, user)
-            
             return Response({"message": "Password changed"}, status=200)
         return Response(serializer.errors, status=400)

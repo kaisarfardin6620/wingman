@@ -3,6 +3,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.validators import EmailValidator
 from django.core.cache import cache
+from drf_spectacular.utils import extend_schema_field
 import re
 
 User = get_user_model()
@@ -157,7 +158,8 @@ class UserProfileSerializer(serializers.ModelSerializer):
         model = User
         fields = ['id', 'email', 'name', 'profile_image', 'profile_image_url', 'is_premium', 'date_joined']
         read_only_fields = ['id', 'is_premium', 'date_joined']
-        
+    
+    @extend_schema_field(serializers.CharField(allow_null=True))
     def get_profile_image_url(self, obj):
         request = self.context.get('request')
         if obj.profile_image and hasattr(obj.profile_image, 'url'):
@@ -208,6 +210,7 @@ class UserPublicSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'profile_image_url']
         read_only_fields = ['id', 'name', 'profile_image_url']
     
+    @extend_schema_field(serializers.CharField(allow_null=True))
     def get_profile_image_url(self, obj):
         request = self.context.get('request')
         if obj.profile_image and hasattr(obj.profile_image, 'url'):
@@ -256,4 +259,4 @@ class DeleteAccountSerializer(serializers.Serializer):
             if not user.check_password(password):
                 raise serializers.ValidationError({"password": "Incorrect password."})
         
-        return attrs    
+        return attrs

@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
+from drf_spectacular.utils import extend_schema_field
 from core.models import Tone, Persona, GlobalConfig
 from chat.models import Message
 
@@ -31,18 +32,21 @@ class AdminUserListSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'date_joined', 'last_login']
 
+    @extend_schema_field(serializers.CharField())
     def get_status(self, obj):
         return "Active" if obj.is_active else "Inactive"
 
+    @extend_schema_field(serializers.IntegerField())
     def get_usage_count(self, obj):
         if hasattr(obj, 'msg_count'):
             return obj.msg_count
-        
         return Message.objects.filter(sender=obj, is_ai=False).count()
 
+    @extend_schema_field(serializers.CharField())
     def get_subscription(self, obj):
         return "Premium" if obj.is_premium else "Free"
     
+    @extend_schema_field(serializers.CharField(allow_null=True))
     def get_profile_image_url(self, obj):
         if obj.profile_image and hasattr(obj.profile_image, 'url'):
             request = self.context.get('request')
@@ -61,19 +65,15 @@ class AdminToneSerializer(serializers.ModelSerializer):
     def validate_name(self, value):
         if value:
             value = value.strip()
-            
             if len(value) < 2:
                 raise serializers.ValidationError("Name must be at least 2 characters.")
             if len(value) > 50:
                 raise serializers.ValidationError("Name cannot exceed 50 characters.")
-            
             queryset = Tone.objects.filter(name__iexact=value)
             if self.instance:
                 queryset = queryset.exclude(pk=self.instance.pk)
-            
             if queryset.exists():
                 raise serializers.ValidationError("A tone with this name already exists.")
-        
         return value
 
 
@@ -86,19 +86,15 @@ class AdminPersonaSerializer(serializers.ModelSerializer):
     def validate_name(self, value):
         if value:
             value = value.strip()
-            
             if len(value) < 2:
                 raise serializers.ValidationError("Name must be at least 2 characters.")
             if len(value) > 50:
                 raise serializers.ValidationError("Name cannot exceed 50 characters.")
-            
             queryset = Persona.objects.filter(name__iexact=value)
             if self.instance:
                 queryset = queryset.exclude(pk=self.instance.pk)
-            
             if queryset.exists():
                 raise serializers.ValidationError("A persona with this name already exists.")
-        
         return value
     
     def validate_description(self, value):
@@ -107,7 +103,6 @@ class AdminPersonaSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError("Description must be at least 10 characters.")
             if len(value) > 2000:
                 raise serializers.ValidationError("Description cannot exceed 2000 characters.")
-        
         return value
 
 
@@ -147,6 +142,7 @@ class AdminProfileUpdateSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'email', 'profile_image', 'profile_image_url']
         read_only_fields = ['id']
 
+    @extend_schema_field(serializers.CharField(allow_null=True))
     def get_profile_image_url(self, obj):
         if obj.profile_image and hasattr(obj.profile_image, 'url'):
             request = self.context.get('request')
@@ -158,23 +154,18 @@ class AdminProfileUpdateSerializer(serializers.ModelSerializer):
     def validate_email(self, value):
         if value:
             value = value.lower().strip()
-            
             user = self.context['request'].user
-            
             if User.objects.exclude(pk=user.pk).filter(email=value).exists():
                 raise serializers.ValidationError("This email is already in use.")
-        
         return value
     
     def validate_name(self, value):
         if value:
             value = value.strip()
-            
             if len(value) < 2:
                 raise serializers.ValidationError("Name must be at least 2 characters.")
             if len(value) > 100:
                 raise serializers.ValidationError("Name cannot exceed 100 characters.")
-        
         return value
     
     def validate_profile_image(self, value):
@@ -186,7 +177,6 @@ class AdminProfileUpdateSerializer(serializers.ModelSerializer):
             if hasattr(value, 'content_type'):
                 if value.content_type not in allowed_types:
                     raise serializers.ValidationError("Only JPEG, PNG, and WebP images are allowed.")
-        
         return value
 
 

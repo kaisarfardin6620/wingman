@@ -5,6 +5,7 @@ import dj_database_url
 from datetime import timedelta
 from corsheaders.defaults import default_headers
 from django.utils.translation import gettext_lazy as _
+import structlog
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -55,6 +56,7 @@ INSTALLED_APPS = [
     'rest_framework.authtoken',
     'corsheaders',
     'rest_framework_simplejwt.token_blacklist',
+    'drf_spectacular',
     'db_file_storage',
     'django_celery_results',
     'allauth',
@@ -63,7 +65,6 @@ INSTALLED_APPS = [
     'allauth.socialaccount.providers.google',
     'allauth.socialaccount.providers.apple',
     'storages',
-    'drf_spectacular',
     'authentication',
     'dashboard',
     'chat',
@@ -202,11 +203,11 @@ REST_FRAMEWORK = {
 
 SPECTACULAR_SETTINGS = {
     'TITLE': 'Wingman AI API',
-    'DESCRIPTION': 'Documentation for the Wingman AI Backend with Chat, Auth, and Dashboard.',
+    'DESCRIPTION': 'Production Grade API for Wingman AI',
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
     'COMPONENT_SPLIT_REQUEST': True, 
-    'COMPONENT_NO_READ_ONLY_REQUIRED': True, 
+    'COMPONENT_NO_READ_ONLY_REQUIRED': True,
     'SWAGGER_UI_SETTINGS': {
         'deepLinking': True,
         'persistAuthorization': True,
@@ -358,68 +359,43 @@ CORS_ALLOW_METHODS = [
 csrf_origins = os.getenv("CSRF_TRUSTED_ORIGINS", "http://127.0.0.1,http://localhost")
 CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in csrf_origins.split(",") if origin.strip()]
 
+structlog.configure(
+    processors=[
+        structlog.stdlib.filter_by_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.JSONRenderer()
+    ],
+    context_class=dict,
+    logger_factory=structlog.stdlib.LoggerFactory(),
+    wrapper_class=structlog.stdlib.BoundLogger,
+    cache_logger_on_first_use=True,
+)
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
+        "json": {
+            "()": structlog.stdlib.ProcessorFormatter,
+            "processor": structlog.processors.JSONRenderer(),
+        },
         "verbose": {
             "format": "[{levelname}] {asctime} {name} {module} {process:d} {thread:d} {message}",
             "style": "{",
-        },
-        "simple": {
-            "format": "[{levelname}] {message}",
-            "style": "{",
-        },
-    },
-    "filters": {
-        "require_debug_false": {
-            "()": "django.utils.log.RequireDebugFalse",
-        },
-        "require_debug_true": {
-            "()": "django.utils.log.RequireDebugTrue",
         },
     },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
-            "formatter": "verbose",
+            "formatter": "json",
         },
         "file": {
             "level": "INFO",
             "class": "logging.handlers.RotatingFileHandler",
             "filename": LOGS_DIR / "django.log",
-            "formatter": "verbose",
+            "formatter": "json",
             "maxBytes": 10485760,
             "backupCount": 5,
-        },
-        "celery_file": {
-            "level": "INFO",
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": LOGS_DIR / "celery.log",
-            "formatter": "verbose",
-            "maxBytes": 10485760,
-            "backupCount": 5,
-        },
-        "security_file": {
-            "level": "WARNING",
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": LOGS_DIR / "security.log",
-            "formatter": "verbose",
-            "maxBytes": 10485760,
-            "backupCount": 10,
-        },
-        "error_file": {
-            "level": "ERROR",
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": LOGS_DIR / "error.log",
-            "formatter": "verbose",
-            "maxBytes": 10485760,
-            "backupCount": 10,
-        },
-        "mail_admins": {
-            "level": "ERROR",
-            "class": "django.utils.log.AdminEmailHandler",
-            "filters": ["require_debug_false"],
         },
     },
     "loggers": {
@@ -428,41 +404,10 @@ LOGGING = {
             "level": os.getenv('DJANGO_LOG_LEVEL', 'INFO'),
             "propagate": True,
         },
-        "django.request": {
-            "handlers": ["error_file", "mail_admins"],
-            "level": "ERROR",
-            "propagate": False,
-        },
-        "django.security": {
-            "handlers": ["security_file", "mail_admins"],
-            "level": "WARNING",
-            "propagate": False,
-        },
-        "django.db.backends": {
-            "handlers": ["console"],
-            "level": os.getenv('DB_LOG_LEVEL', 'WARNING'),
-            "propagate": False,
-        },
-        "ai": {
-            "handlers": ["console", "file"],
-            "level": "INFO",
-            "propagate": False,
-        },
-        "authentication": {
-            "handlers": ["console", "file"],
-            "level": "INFO",
-            "propagate": False,
-        },
-        "chat": {
-            "handlers": ["console", "file"],
-            "level": "INFO",
-            "propagate": False,
-        },
-        "celery": {
-            "handlers": ["console", "celery_file"],
-            "level": "INFO",
-            "propagate": False,
-        },
+        "authentication": {"handlers": ["console", "file"], "level": "INFO", "propagate": False},
+        "chat": {"handlers": ["console", "file"], "level": "INFO", "propagate": False},
+        "core": {"handlers": ["console", "file"], "level": "INFO", "propagate": False},
+        "dashboard": {"handlers": ["console", "file"], "level": "INFO", "propagate": False},
     },
 }
 
