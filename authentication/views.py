@@ -17,6 +17,7 @@ from .serializers import *
 from .services import AuthService
 from .utils import send_otp_via_email
 from wingman.constants import CACHE_TTL_USER_PROFILE
+from django.db import transaction
 
 logger = structlog.get_logger(__name__)
 
