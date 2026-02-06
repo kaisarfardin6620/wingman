@@ -192,7 +192,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         try:
             current_count = cache.incr(count_cache_key)
         except ValueError:
-            cache.set(count_cache_key, 1, timeout=86400)
+            cache.set(count_cache_key, 1, timeout=14400)
             current_count = 1
             
         if current_count > config.daily_free_limit:
