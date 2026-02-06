@@ -15,6 +15,7 @@ logger = structlog.get_logger(__name__)
 
 class ChatConsumer(AsyncWebsocketConsumer):
     async def connect(self):
+        self.room_group_name = None
         self.user = self.scope.get("user")
         
         if not self.user or self.user.is_anonymous:
@@ -23,7 +24,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             return
         
         self.conversation_id = self.scope['url_route']['kwargs'].get('conversation_id')
-        self.room_group_name = None
+        # self.room_group_name = None
 
         if self.conversation_id:
             session = await self.get_session_cached(self.conversation_id)
@@ -87,6 +88,19 @@ class ChatConsumer(AsyncWebsocketConsumer):
             self.room_group_name = f'chat_{self.conversation_id}'
             await self.channel_layer.group_add(self.room_group_name, self.channel_name)
 
+        lock_key = f"ai_processing_lock:{session.id}"
+        is_locked = await self.check_cache_lock(lock_key)
+        
+        if is_locked:
+            await self.send(text_data=json.dumps({
+                'type': 'error',
+                'code': 'ai_busy', 
+                'message': 'AI is thinking. Please wait.'
+            }))
+            return
+        
+        await self.set_cache_lock(lock_key, 60)
+
         if send_history_flag:
             history = await self.get_chat_history_cached(session)
             await self.send(text_data=json.dumps({
@@ -121,6 +135,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
             'conversation_id': event['conversation_id'],
             'message': event['message']
         }))
+
+    @database_sync_to_async
+    def check_cache_lock(self, key):
+        return cache.get(key)
+
+    @database_sync_to_async
+    def set_cache_lock(self, key, timeout):
+        cache.set(key, "true", timeout)
 
     @database_sync_to_async
     def get_session_cached(self, conversation_id):

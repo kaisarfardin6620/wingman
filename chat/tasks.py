@@ -1,6 +1,7 @@
 import json
 import base64
 import logging
+import tiktoken
 from celery import shared_task
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
@@ -9,7 +10,7 @@ from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
 from datetime import timedelta
-from openai import OpenAI, OpenAIError
+from openai import OpenAI, OpenAIError, RateLimitError, APIConnectionError, InternalServerError, BadRequestError
 from .models import ChatSession, Message, DetectedEvent
 from core.models import UserSettings, TargetProfile
 from core.utils import send_push_notification
@@ -18,9 +19,8 @@ logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
 OPENAI_TIMEOUT = 30
-MAX_HISTORY_MESSAGES = 20
-MAX_TOKENS_GPT4 = 4000
-MAX_TOKENS_MINI = 500
+MAX_TOKENS_GPT4_CONTEXT = 8000
+MAX_TOKENS_OUTPUT = 1000
 
 def send_ws_message(session_id, data):
     try:
@@ -36,15 +36,45 @@ def send_ws_message(session_id, data):
     except Exception as e:
         logger.error(f"Error sending WebSocket message: {e}")
 
+def count_tokens(text, model="gpt-4o"):
+    """Returns the number of tokens in a text string."""
+    try:
+        encoding = tiktoken.encoding_for_model(model)
+        return len(encoding.encode(text))
+    except Exception:
+        return len(text) // 4
+
+def trim_conversation_history(history_messages, system_prompt, max_context_tokens=MAX_TOKENS_GPT4_CONTEXT):
+    """
+    Trims the history list to ensure the total request fits within token limits.
+    history_messages: List of dicts [{'role': 'user', 'content': '...'}]
+    """
+    current_tokens = count_tokens(system_prompt) + MAX_TOKENS_OUTPUT
+    trimmed_history = []
+    for msg in reversed(history_messages):
+        msg_content = msg.get('content', '')
+        msg_tokens = count_tokens(msg_content)
+        
+        if current_tokens + msg_tokens < max_context_tokens:
+            trimmed_history.insert(0, msg)
+            current_tokens += msg_tokens
+        else:
+            logger.info(f"Context limit reached. Dropping message of length {len(msg_content)}")
+            break
+            
+    return trimmed_history
+
 @shared_task(
     bind=True,
     max_retries=MAX_RETRIES,
     default_retry_delay=5,
-    autoretry_for=(OpenAIError,),
+    autoretry_for=(RateLimitError, APIConnectionError, InternalServerError),
     retry_backoff=True
 )
 def generate_ai_response(self, session_id, user_text, selected_tone=None):
     client = OpenAI(api_key=settings.OPENAI_API_KEY)
+    lock_key = f"ai_processing_lock:{session_id}"
+    
     try:
         session = ChatSession.objects.select_related('user', 'target_profile').get(id=session_id)
         rate_limit_key = f"ai_response_rate:{session.user.id}"
@@ -106,20 +136,22 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None):
             "If returning suggestions, 'content' MUST be a list of strings: ['Option 1', 'Option 2', ...]\n"
         )
 
-        recent_messages = session.messages.only('is_ai', 'text', 'ocr_extracted_text').order_by('-created_at')[:MAX_HISTORY_MESSAGES]
-        history = []
+        recent_messages = session.messages.only('is_ai', 'text', 'ocr_extracted_text').order_by('-created_at')[:40] 
+        
+        raw_history = []
         for msg in reversed(list(recent_messages)):
             role = "assistant" if msg.is_ai else "user"
             content = msg.text or ""
             if msg.ocr_extracted_text: content += f"\n[IMAGE: {msg.ocr_extracted_text}]"
-            history.append({"role": role, "content": content})
+            raw_history.append({"role": role, "content": content})
 
-        messages_payload = [{"role": "system", "content": system_prompt}] + history
+        trimmed_history = trim_conversation_history(raw_history, system_prompt)
+        messages_payload = [{"role": "system", "content": system_prompt}] + trimmed_history
         
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=messages_payload,
-            max_tokens=MAX_TOKENS_GPT4,
+            max_tokens=MAX_TOKENS_OUTPUT,
             timeout=OPENAI_TIMEOUT,
             temperature=0.7,
             response_format={"type": "json_object"}
@@ -163,13 +195,25 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None):
         
         return ai_msg.id
 
-    except OpenAIError as e:
-        logger.error(f"OpenAI API Error: {e}")
-        send_ws_message(session.conversation_id, {'id': None, 'text': "AI Error.", 'is_ai': True, 'type': 'error'})
+    except BadRequestError as e:
+        logger.error(f"OpenAI Bad Request (Non-Retryable): {e}")
+        send_ws_message(session_id, {'id': None, 'text': "I couldn't process that (Request too long or invalid).", 'is_ai': True, 'type': 'error'})
+    
+    except (RateLimitError, APIConnectionError, InternalServerError) as e:
+        logger.warning(f"OpenAI Network/Rate Error (Retrying): {e}")
         raise self.retry(exc=e)
+        
+    except OpenAIError as e:
+        logger.error(f"OpenAI Generic Error: {e}")
+        send_ws_message(session_id, {'id': None, 'text': "AI Error.", 'is_ai': True, 'type': 'error'})
+        raise self.retry(exc=e)
+        
     except Exception as e:
-        logger.error(f"AI Error: {e}", exc_info=True)
-        send_ws_message(session.conversation_id, {'id': None, 'text': "System Error.", 'is_ai': True, 'type': 'error'})
+        logger.error(f"AI System Error: {e}", exc_info=True)
+        send_ws_message(session_id, {'id': None, 'text': "System Error.", 'is_ai': True, 'type': 'error'})
+
+    finally:
+        cache.delete(lock_key)
 
 @shared_task(bind=True, max_retries=2, autoretry_for=(OpenAIError,))
 def analyze_screenshot_task(self, message_id):

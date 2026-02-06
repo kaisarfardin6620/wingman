@@ -64,6 +64,7 @@ INSTALLED_APPS = [
     'allauth.socialaccount',
     'allauth.socialaccount.providers.google',
     'allauth.socialaccount.providers.apple',
+    'django_cleanup.apps.CleanupConfig',
     'storages',
     'authentication',
     'dashboard',
