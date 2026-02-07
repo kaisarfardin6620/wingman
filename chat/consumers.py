@@ -24,7 +24,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
             return
         
         self.conversation_id = self.scope['url_route']['kwargs'].get('conversation_id')
-        # self.room_group_name = None
 
         if self.conversation_id:
             session = await self.get_session_cached(self.conversation_id)
@@ -41,6 +40,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 }))
             else:
                 await self.accept()
+                await self.send(text_data=json.dumps({
+                    'type': 'error',
+                    'message': 'Conversation not found'
+                }))
                 await self.close(code=4004)
         else:
             await self.accept()
@@ -53,6 +56,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
         try:
             data = json.loads(text_data)
         except json.JSONDecodeError:
+            await self.send(text_data=json.dumps({
+                'type': 'error',
+                'message': 'Invalid JSON'
+            }))
             return
 
         message_text = data.get('message', '').strip()
@@ -61,11 +68,18 @@ class ChatConsumer(AsyncWebsocketConsumer):
         selected_tone = data.get('tone', None)
 
         if not message_text:
+            await self.send(text_data=json.dumps({
+                'type': 'error',
+                'message': 'Message cannot be empty'
+            }))
             return
 
         error_message = await self.check_limits_cached(message_text)
         if error_message:
-            await self.send(text_data=json.dumps({'type': 'error', 'message': error_message}))
+            await self.send(text_data=json.dumps({
+                'type': 'error', 
+                'message': error_message
+            }))
             return
 
         session = None
@@ -74,6 +88,13 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
         if self.conversation_id:
             session = await self.get_session_cached(self.conversation_id)
+            if not session:
+                await self.send(text_data=json.dumps({
+                    'type': 'error',
+                    'message': 'Session expired or not found'
+                }))
+                return
+        
         elif incoming_conversation_id:
             session = await self.get_session_cached(incoming_conversation_id)
             if session:
@@ -81,8 +102,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 self.room_group_name = f'chat_{self.conversation_id}'
                 await self.channel_layer.group_add(self.room_group_name, self.channel_name)
                 send_history_flag = True
-
-        if not session:
+            else:
+                await self.send(text_data=json.dumps({
+                    'type': 'error',
+                    'message': 'Invalid conversation ID'
+                }))
+                return
+        
+        else:
             session, created = await self.create_session(target_id)
             self.conversation_id = str(session.conversation_id)
             self.room_group_name = f'chat_{self.conversation_id}'
@@ -148,19 +175,29 @@ class ChatConsumer(AsyncWebsocketConsumer):
     def get_session_cached(self, conversation_id):
         cache_key = f"chat_session:{conversation_id}:{self.user.id}"
         cached = cache.get(cache_key)
-        if cached: return cached
+        if cached: 
+            return cached
         try:
-            session = ChatSession.objects.select_related('user', 'target_profile').get(conversation_id=conversation_id, user=self.user)
+            session = ChatSession.objects.select_related('user', 'target_profile').get(
+                conversation_id=conversation_id, 
+                user=self.user
+            )
             cache.set(cache_key, session, CACHE_TTL_CHAT_SESSION)
             return session
-        except ChatSession.DoesNotExist: return None
+        except ChatSession.DoesNotExist: 
+            return None
 
     @database_sync_to_async
     def get_chat_history_cached(self, session):
         cache_key = f"chat_history:{session.conversation_id}"
         cached = cache.get(cache_key)
-        if cached: return cached
-        messages = session.messages.only('id', 'text', 'is_ai', 'image', 'ocr_extracted_text', 'created_at').order_by('created_at')
+        if cached: 
+            return cached
+        
+        messages = session.messages.only(
+            'id', 'text', 'is_ai', 'image', 'ocr_extracted_text', 'created_at'
+        ).order_by('created_at')
+        
         history_data = []
         for msg in messages:
             history_data.append({
@@ -176,7 +213,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def check_limits_cached(self, text):
-        if self.user.is_premium: return None
+        if self.user.is_premium: 
+            return None
+        
         cache_key = "global_config"
         config = cache.get(cache_key)
         if not config:
@@ -192,7 +231,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         try:
             current_count = cache.incr(count_cache_key)
         except ValueError:
-            cache.set(count_cache_key, 1, timeout=14400)
+            cache.set(count_cache_key, 1, timeout=86400)  # 24 hours
             current_count = 1
             
         if current_count > config.daily_free_limit:
@@ -203,15 +242,23 @@ class ChatConsumer(AsyncWebsocketConsumer):
     def create_session(self, target_id=None):
         target = None
         if target_id:
-            try: target = TargetProfile.objects.get(id=target_id, user=self.user)
-            except TargetProfile.DoesNotExist: pass
+            try: 
+                target = TargetProfile.objects.get(id=target_id, user=self.user)
+            except TargetProfile.DoesNotExist: 
+                pass
+        
         session = ChatSession.objects.create(user=self.user, target_profile=target)
         logger.info("ws_session_created", user_id=self.user.id, session_id=session.id)
         return session, True
 
     @database_sync_to_async
     def save_message(self, session, text):
-        message = Message.objects.create(session=session, sender=self.user, text=text, is_ai=False)
+        message = Message.objects.create(
+            session=session, 
+            sender=self.user, 
+            text=text, 
+            is_ai=False
+        )
         session.update_preview()
         return message
 
