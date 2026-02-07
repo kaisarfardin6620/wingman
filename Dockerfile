@@ -24,7 +24,8 @@ RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
 COPY . .
 
 RUN mkdir -p /app/logs /app/staticfiles /app/media \
-    && chown -R appuser:appgroup /app
+    && chown -R appuser:appgroup /app \
+    && chmod +x /app/entrypoint.sh
 
 USER appuser
 
