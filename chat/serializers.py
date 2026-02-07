@@ -6,7 +6,10 @@ from core.serializers import TargetProfileSerializer
 class MessageSerializer(serializers.ModelSerializer):
     class Meta:
         model = Message
-        fields = ['id', 'is_ai', 'text', 'image', 'audio', 'ocr_extracted_text', 'created_at']
+        fields = [
+            'id', 'is_ai', 'text', 'image', 'audio', 
+            'ocr_extracted_text', 'created_at', 'processing_status'
+        ]
 
 class DetectedEventSerializer(serializers.ModelSerializer):
     class Meta:

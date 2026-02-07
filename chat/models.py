@@ -71,6 +71,13 @@ class ChatSession(models.Model):
 
 
 class Message(models.Model):
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('processing', 'Processing'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+    ]
+
     session = models.ForeignKey(
         ChatSession, 
         on_delete=models.CASCADE, 
@@ -96,6 +103,12 @@ class Message(models.Model):
         blank=True,
         help_text="AI-generated tags/metadata for this message"
     )
+    processing_status = models.CharField(
+        max_length=20, 
+        choices=STATUS_CHOICES, 
+        default='completed',
+        db_index=True
+    )
 
     class Meta:
         verbose_name = "Message"
@@ -108,7 +121,7 @@ class Message(models.Model):
         ]
 
     def __str__(self):
-        return f"Message {self.id} - {'AI' if self.is_ai else 'User'}"
+        return f"Message {self.id} - {'AI' if self.is_ai else 'User'} ({self.processing_status})"
 
 
 class DetectedEvent(models.Model):

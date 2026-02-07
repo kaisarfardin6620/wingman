@@ -39,7 +39,7 @@ class ChatAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         self.assertEqual(ChatSession.objects.count(), 0)
 
-    @patch('chat.services.analyze_screenshot_task.delay')
+    @patch('chat.tasks.analyze_screenshot_task.delay')
     def test_image_upload(self, mock_task):
         url = reverse('session-upload', args=[self.session.conversation_id])
         

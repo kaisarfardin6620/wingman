@@ -145,6 +145,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 'id': user_msg.id,
                 'text': user_msg.text,
                 'is_ai': False,
+                'status': 'completed',
                 'created_at': str(user_msg.created_at)
             }
         }))
@@ -158,7 +159,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     async def chat_message(self, event):
         await self.send(text_data=json.dumps({
-            'type': 'new_message',
+            'type': 'message_update',
             'conversation_id': event['conversation_id'],
             'message': event['message']
         }))
@@ -195,7 +196,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             return cached
         
         messages = session.messages.only(
-            'id', 'text', 'is_ai', 'image', 'ocr_extracted_text', 'created_at'
+            'id', 'text', 'is_ai', 'image', 'ocr_extracted_text', 'created_at', 'processing_status'
         ).order_by('created_at')
         
         history_data = []
@@ -206,6 +207,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 'is_ai': msg.is_ai,
                 'image': msg.image.url if msg.image else None,
                 'ocr_text': msg.ocr_extracted_text,
+                'status': msg.processing_status,
                 'created_at': str(msg.created_at)
             })
         cache.set(cache_key, history_data, CACHE_TTL_CHAT_HISTORY)
@@ -257,7 +259,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
             session=session, 
             sender=self.user, 
             text=text, 
-            is_ai=False
+            is_ai=False,
+            processing_status='completed'
         )
         session.update_preview()
         return message

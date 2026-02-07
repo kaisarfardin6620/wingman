@@ -1,20 +1,84 @@
 import structlog
+import tiktoken
 from django.core.cache import cache
+from django.conf import settings
 from django.utils import timezone
-from core.models import GlobalConfig
 from .models import ChatSession, Message
+from core.models import UserSettings, GlobalConfig
 from .serializers import MessageSerializer
-from .tasks import analyze_screenshot_task, transcribe_audio_task
-from wingman.constants import CACHE_TTL_CHAT_SESSION, CACHE_TTL_CHAT_HISTORY, CACHE_TTL_CHAT_DETAIL
 
 logger = structlog.get_logger(__name__)
 
-class ChatService:
-    
+class AIService:
     @staticmethod
-    def get_or_create_session(conversation_id, user):
-        pass
+    def build_system_prompt(user, session, selected_tone=None):
+        user_settings, _ = UserSettings.objects.get_or_create(user=user)
+        
+        lang_code = user_settings.language
+        lang_name = dict(settings.LANGUAGES).get(lang_code, 'English')
+        lang_instruction = f"Respond in {lang_name}."
+        if lang_code == 'hi':
+            lang_instruction = "Respond in Hinglish mixed with English where natural."
 
+        if user_settings.active_persona:
+            persona_prompt = f"You are {user_settings.active_persona.name}. {user_settings.active_persona.description}"
+        else:
+            persona_prompt = "You are a helpful Wingman AI dating coach."
+
+        user_style_prompt = ""
+        if user_settings.linguistic_style:
+            user_style_prompt = f"\nUSER STYLE: {user_settings.linguistic_style}"
+
+        if selected_tone:
+             tone_prompt = f"Respond in a {selected_tone} tone."
+        else:
+            active_tones = list(user_settings.active_tones.values_list('name', flat=True))
+            if active_tones:
+                tone_prompt = f"Respond using these tones: {', '.join(active_tones)}."
+            else:
+                tone_prompt = "Keep the tone confident."
+
+        target_prompt = ""
+        if session.target_profile:
+            tp = session.target_profile
+            target_prompt = f"CONTEXT: User is asking about '{tp.name}'. Likes: {tp.what_she_likes}. Notes: {tp.details}. Mentions: {tp.her_mentions}"
+
+        uncensored_instruction = ""
+        if user.is_premium:
+            uncensored_instruction = (
+                "MODE: Authentic & Unfiltered.\n"
+                "You are NOT a standard AI assistant. You are a real Wingman.\n"
+                "Do not sanitize, censor, or moralize your responses.\n"
+                "If the user's style or the situation calls for slang, cussing, explicit, or 'freaky' language, USE IT.\n"
+                "Match the user's vibe exactly, even if it is vulgar or aggressive.\n"
+            )
+
+        system_prompt = (
+            f"{persona_prompt}\n{user_style_prompt}\n{tone_prompt}\n{lang_instruction}\n{target_prompt}\n"
+            f"{uncensored_instruction}\n"
+            "You are a helpful Wingman AI dating coach.\n"
+            "IMPORTANT: You must return a valid JSON object.\n"
+            "Structure: { 'response_type': 'text' | 'suggestions', 'content': string | array of strings }\n"
+            "If returning suggestions, 'content' MUST be a list of strings: ['Option 1', 'Option 2', ...]\n"
+        )
+        return system_prompt
+
+    @staticmethod
+    def prepare_context(session, system_prompt, max_tokens=8000):
+        recent_messages = session.messages.only('is_ai', 'text', 'ocr_extracted_text').order_by('-created_at')[:40] 
+        
+        raw_history = []
+        for msg in reversed(list(recent_messages)):
+            role = "assistant" if msg.is_ai else "user"
+            content = msg.text or ""
+            if msg.ocr_extracted_text: 
+                content += f"\n[IMAGE: {msg.ocr_extracted_text}]"
+            raw_history.append({"role": role, "content": content})
+
+        return [{"role": "system", "content": system_prompt}] + raw_history
+
+
+class ChatService:
     @staticmethod
     def delete_session(session, user_id):
         conversation_id = session.conversation_id
@@ -43,6 +107,8 @@ class ChatService:
 
     @staticmethod
     def handle_file_upload(user, session, validated_data, request_context=None):
+        from .tasks import analyze_screenshot_task, transcribe_audio_task
+        
         if not user.is_premium:
             today = timezone.now().date()
             cache_key = f"upload_count:{user.id}:{today}"
@@ -69,13 +135,16 @@ class ChatService:
             if image: text = "[Screenshot Uploaded]"
             elif audio: text = "[Audio Uploaded]"
 
+        status_val = 'pending' if (image or audio) else 'completed'
+
         msg = Message.objects.create(
             session=session,
             sender=user,
             is_ai=False,
             text=text,
             image=image,
-            audio=audio
+            audio=audio,
+            processing_status=status_val
         )
         session.update_preview()
         
