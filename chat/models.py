@@ -91,6 +91,11 @@ class Message(models.Model):
     ocr_extracted_text = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     tokens_used = models.PositiveIntegerField(default=0, null=True, blank=True)
+    analysis_tags = models.JSONField(
+        default=list, 
+        blank=True,
+        help_text="AI-generated tags/metadata for this message"
+    )
 
     class Meta:
         verbose_name = "Message"
