@@ -24,12 +24,13 @@ services:
       - static_volume:/app/staticfiles
       - ./media:/app/media 
       - ./logs:/app/logs
+      - ./dbs:/app/dbs
     depends_on:
       - redis
 
-  celery:
+  celery_ai:
     build: .
-    container_name: wingman_celery
+    container_name: wingman_celery_ai
     restart: unless-stopped
     env_file:
       - .env
@@ -38,10 +39,28 @@ services:
     volumes:
       - ./media:/app/media
       - ./logs:/app/logs
+      - ./dbs:/app/dbs
     depends_on:
       - redis
       - web
-    command: celery -A wingman worker --loglevel=info
+    command: celery -A wingman worker --pool=gevent --concurrency=100 -Q default -n worker_ai@%h --loglevel=info
+
+  celery_heavy:
+    build: .
+    container_name: wingman_celery_heavy
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - RUNNING_IN_DOCKER=true
+    volumes:
+      - ./media:/app/media
+      - ./logs:/app/logs
+      - ./dbs:/app/dbs
+    depends_on:
+      - redis
+      - web
+    command: celery -A wingman worker --pool=prefork --concurrency=2 -Q heavy_queue -n worker_heavy@%h --loglevel=info
 
   celery-beat:
     build: .
@@ -54,6 +73,7 @@ services:
     volumes:
       - ./media:/app/media
       - ./logs:/app/logs
+      - ./dbs:/app/dbs
     depends_on:
       - redis
       - web

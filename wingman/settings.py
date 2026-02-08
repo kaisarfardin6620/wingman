@@ -111,6 +111,8 @@ TEMPLATES = [
 WSGI_APPLICATION = 'wingman.wsgi.application'
 ASGI_APPLICATION = 'wingman.asgi.application'
 
+RUNNING_IN_DOCKER = os.environ.get('RUNNING_IN_DOCKER') == 'true'
+
 DATABASE_URL = os.getenv("DATABASE_BASE_URL")
 
 if DATABASE_URL:
@@ -127,10 +129,17 @@ if DATABASE_URL:
     if 'postgres' in DATABASE_URL or 'postgresql' in DATABASE_URL:
         DATABASES['default']['OPTIONS']['options'] = '-c statement_timeout=30000'
 else:
+    if RUNNING_IN_DOCKER:
+        db_path = BASE_DIR / 'dbs' / 'db.sqlite3'
+        if not os.path.exists(db_path.parent):
+            os.makedirs(db_path.parent)
+    else:
+        db_path = BASE_DIR / 'db.sqlite3'
+
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': BASE_DIR / 'db.sqlite3',
+            'NAME': db_path,
         }
     }
 
@@ -243,8 +252,6 @@ SIMPLE_JWT = {
     'SLIDING_TOKEN_REFRESH_LIFETIME': timedelta(days=1),
 }
 
-RUNNING_IN_DOCKER = os.environ.get('RUNNING_IN_DOCKER') == 'true'
-
 if RUNNING_IN_DOCKER:
     REDIS_LOCATION = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
 else:
@@ -278,6 +285,11 @@ CELERY_WORKER_PREFETCH_MULTIPLIER = int(os.getenv('CELERY_PREFETCH_MULTIPLIER', 
 CELERY_TASK_COMPRESSION = 'gzip'
 CELERY_RESULT_COMPRESSION = 'gzip'
 CELERY_BROKER_POOL_LIMIT = int(os.getenv('CELERY_BROKER_POOL_LIMIT', 10))
+CELERY_TASK_ROUTES = {
+    'chat.tasks.analyze_screenshot_task': {'queue': 'heavy_queue'},
+    'chat.tasks.transcribe_audio_task': {'queue': 'heavy_queue'},
+    '*': {'queue': 'default'},
+}
 
 CACHES = {
     "default": {
