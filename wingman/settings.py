@@ -357,6 +357,7 @@ if not CORS_ALLOW_ALL_ORIGINS:
 CORS_ALLOW_HEADERS = list(default_headers) + [
     'authorization',
     'content-disposition',
+    'ngrok-skip-browser-warning',
 ]
 
 CORS_ALLOW_CREDENTIALS = True
