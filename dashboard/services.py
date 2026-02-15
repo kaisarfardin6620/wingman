@@ -4,6 +4,7 @@ from django.db.models import Count, Q
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
 from wingman.constants import CACHE_TTL_DASHBOARD_STATS
+from chat.models import Message
 
 User = get_user_model()
 logger = structlog.get_logger(__name__)
@@ -32,8 +33,28 @@ class DashboardService:
         )
         graph_data = [{"month": e['month'].strftime('%b %Y'), "count": e['count']} for e in monthly_data if e['month']]
 
+        recent_users_qs = (
+            User.objects
+            .annotate(usage_count=Count('message', filter=Q(message__is_ai=False)))
+            .order_by('-date_joined')[:5]
+        )
+        
+        recent_users = []
+        for user in recent_users_qs:
+            user_data = {
+                "id": user.id,
+                "name": user.name or "",
+                "email": user.email,
+                "profile_image": user.profile_image.url if user.profile_image else None,
+                "subscription": "Premium" if user.is_premium else "Free",
+                "usage_count": user.usage_count,
+                "status": "Active" if user.is_active else "Inactive",
+            }
+            recent_users.append(user_data)
+
         return {
             "total_users": total_users, "active_today": active_today,
             "premium_users": premium_users, "free_users": free_users,
-            "conversion_rate": conversion_rate, "graph_data": graph_data
+            "conversion_rate": conversion_rate, "graph_data": graph_data,
+            "recent_users": recent_users
         }

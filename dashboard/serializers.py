@@ -15,6 +15,7 @@ class DashboardStatsSerializer(serializers.Serializer):
     conversion_rate = serializers.FloatField()
     free_users = serializers.IntegerField()
     graph_data = serializers.ListField()
+    recent_users = serializers.ListField()
 
 
 class AdminUserListSerializer(serializers.ModelSerializer):
