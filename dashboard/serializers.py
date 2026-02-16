@@ -7,6 +7,18 @@ from chat.models import Message
 
 User = get_user_model()
 
+class GraphDataSerializer(serializers.Serializer):
+    month = serializers.CharField()
+    count = serializers.IntegerField()
+
+class UserSummarySerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+    email = serializers.EmailField()
+    profile_image = serializers.CharField(allow_null=True)
+    subscription = serializers.CharField()
+    usage_count = serializers.IntegerField()
+    status = serializers.CharField()
 
 class DashboardStatsSerializer(serializers.Serializer):
     total_users = serializers.IntegerField()
@@ -14,9 +26,8 @@ class DashboardStatsSerializer(serializers.Serializer):
     premium_users = serializers.IntegerField()
     conversion_rate = serializers.FloatField()
     free_users = serializers.IntegerField()
-    graph_data = serializers.ListField()
-    recent_users = serializers.ListField()
-
+    graph_data = GraphDataSerializer(many=True)
+    recent_users = UserSummarySerializer(many=True)
 
 class AdminUserListSerializer(serializers.ModelSerializer):
     status = serializers.SerializerMethodField()
@@ -56,7 +67,6 @@ class AdminUserListSerializer(serializers.ModelSerializer):
             return obj.profile_image.url
         return None
 
-
 class AdminToneSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tone
@@ -76,7 +86,6 @@ class AdminToneSerializer(serializers.ModelSerializer):
             if queryset.exists():
                 raise serializers.ValidationError("A tone with this name already exists.")
         return value
-
 
 class AdminPersonaSerializer(serializers.ModelSerializer):
     class Meta:
@@ -106,7 +115,6 @@ class AdminPersonaSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError("Description cannot exceed 2000 characters.")
         return value
 
-
 class GlobalConfigSerializer(serializers.ModelSerializer):
     class Meta:
         model = GlobalConfig
@@ -133,7 +141,6 @@ class GlobalConfigSerializer(serializers.ModelSerializer):
         if value > 100:
             raise serializers.ValidationError("OCR limit cannot exceed 100.")
         return value
-
 
 class AdminProfileUpdateSerializer(serializers.ModelSerializer):
     profile_image_url = serializers.SerializerMethodField()
@@ -180,7 +187,6 @@ class AdminProfileUpdateSerializer(serializers.ModelSerializer):
                     raise serializers.ValidationError("Only JPEG, PNG, and WebP images are allowed.")
         return value
 
-
 class ChangePasswordSerializer(serializers.Serializer):
     old_password = serializers.CharField(
         required=True,
@@ -218,5 +224,4 @@ class ChangePasswordSerializer(serializers.Serializer):
             raise serializers.ValidationError({
                 "new_password": list(e.messages)
             })
-        
         return attrs

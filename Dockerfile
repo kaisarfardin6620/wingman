@@ -15,8 +15,8 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN python -m venv .venv \
     && .venv/bin/pip install --upgrade pip \
-    && .venv/bin/pip install -r requirements.txt \
-    && .venv/bin/pip install gunicorn uvicorn[standard] \
+    && .venv/bin/pip install --no-cache-dir -r requirements.txt \
+    && .venv/bin/pip install --no-cache-dir gunicorn uvicorn[standard] \
     && .venv/bin/python -m spacy download en_core_web_sm
 
 RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
@@ -33,4 +33,4 @@ EXPOSE 8000
 
 ENTRYPOINT ["/app/entrypoint.sh"]
 
-CMD ["gunicorn", "wingman.asgi:application", "--bind", "0.0.0.0:8000", "-k", "uvicorn.workers.UvicornWorker", "--workers", "3"]
+CMD ["gunicorn", "wingman.asgi:application", "--bind", "0.0.0.0:8000", "-k", "uvicorn.workers.UvicornWorker", "--workers", "3", "--access-logfile", "-", "--error-logfile", "-"]

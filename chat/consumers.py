@@ -116,9 +116,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
             await self.channel_layer.group_add(self.room_group_name, self.channel_name)
 
         lock_key = f"ai_processing_lock:{session.id}"
-        is_locked = await self.check_cache_lock(lock_key)
         
-        if is_locked:
+        if not await self.acquire_lock(lock_key, 60):
             await self.send(text_data=json.dumps({
                 'type': 'error',
                 'code': 'ai_busy', 
@@ -126,8 +125,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
             }))
             return
         
-        await self.set_cache_lock(lock_key, 60)
-
         if send_history_flag:
             history = await self.get_chat_history_cached(session)
             await self.send(text_data=json.dumps({
@@ -165,12 +162,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
         }))
 
     @database_sync_to_async
-    def check_cache_lock(self, key):
-        return cache.get(key)
-
-    @database_sync_to_async
-    def set_cache_lock(self, key, timeout):
-        cache.set(key, "true", timeout)
+    def acquire_lock(self, key, timeout):
+        return cache.add(key, "true", timeout)
 
     @database_sync_to_async
     def get_session_cached(self, conversation_id):

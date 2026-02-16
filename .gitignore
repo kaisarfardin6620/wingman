@@ -28,3 +28,4 @@ celerybeat-schedule-shm
 chat_uploads
 profile_images
 serviceaccountkey.json
+.env.example

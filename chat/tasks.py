@@ -351,16 +351,24 @@ def generate_chat_title(self, session_id, first_message):
         logger.error(f"Title Gen Error: {e}")
 
 @shared_task
-def check_reminders_task():
-    from datetime import timedelta
-    now = timezone.now()
-    events = DetectedEvent.objects.filter(
-        reminder_datetime__gte=now,
-        reminder_datetime__lte=now + timedelta(minutes=15),
-        reminder_sent=False, is_cancelled=False
-    ).select_related('session__user')
-    
-    for event in events:
+def send_reminder_push(event_id):
+    try:
+        event = DetectedEvent.objects.select_related('session__user').get(id=event_id)
         send_push_notification(event.session.user, "Upcoming Event", f"{event.title} is starting soon.")
         event.reminder_sent = True
         event.save(update_fields=['reminder_sent'])
+    except Exception as e:
+        logger.error(f"Failed to send reminder for event {event_id}: {e}")
+
+@shared_task
+def check_reminders_task():
+    from datetime import timedelta
+    now = timezone.now()
+    event_ids = DetectedEvent.objects.filter(
+        reminder_datetime__gte=now,
+        reminder_datetime__lte=now + timedelta(minutes=15),
+        reminder_sent=False, is_cancelled=False
+    ).values_list('id', flat=True)
+    
+    for eid in event_ids:
+        send_reminder_push.delay(eid)

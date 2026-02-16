@@ -119,7 +119,7 @@ if DATABASE_URL:
     DATABASES = {
         'default': dj_database_url.parse(DATABASE_URL)
     }
-    DATABASES['default']['CONN_MAX_AGE'] = int(os.getenv('DB_CONN_MAX_AGE', 600))
+    DATABASES['default']['CONN_MAX_AGE'] = 0
     DATABASES['default']['CONN_HEALTH_CHECKS'] = True
     
     DATABASES['default']['OPTIONS'] = {
