@@ -16,8 +16,7 @@ COPY requirements.txt .
 RUN python -m venv .venv \
     && .venv/bin/pip install --upgrade pip \
     && .venv/bin/pip install --no-cache-dir -r requirements.txt \
-    && .venv/bin/pip install --no-cache-dir gunicorn uvicorn[standard] \
-    && .venv/bin/python -m spacy download en_core_web_sm
+    && .venv/bin/pip install --no-cache-dir gunicorn uvicorn[standard] 
 
 RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
 
