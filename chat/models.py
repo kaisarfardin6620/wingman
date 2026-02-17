@@ -1,9 +1,9 @@
 import uuid
 import json
 from django.db import models
+from django.db.models import F
 from django.conf import settings
 from core.models import TargetProfile
-
 
 class ChatSession(models.Model):
     conversation_id = models.UUIDField(
@@ -66,9 +66,15 @@ class ChatSession(models.Model):
                     pass
 
             self.last_message_preview = (preview_text[:97] + "...") if len(preview_text) > 100 else preview_text
-            self.message_count = self.messages.count()
-            self.save(update_fields=['last_message_preview', 'message_count', 'updated_at'])
-
+            self.updated_at = last_msg.created_at
+            
+            ChatSession.objects.filter(pk=self.pk).update(
+                last_message_preview=self.last_message_preview,
+                updated_at=self.updated_at,
+                message_count=models.Subquery(
+                    Message.objects.filter(session_id=self.pk).values('session_id').annotate(count=models.Count('id')).values('count')
+                )
+            )
 
 class Message(models.Model):
     STATUS_CHOICES = [
@@ -122,7 +128,6 @@ class Message(models.Model):
 
     def __str__(self):
         return f"Message {self.id} - {'AI' if self.is_ai else 'User'} ({self.processing_status})"
-
 
 class DetectedEvent(models.Model):
     session = models.ForeignKey(

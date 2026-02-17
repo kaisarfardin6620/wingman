@@ -50,9 +50,7 @@ class AdminUserListSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(serializers.IntegerField())
     def get_usage_count(self, obj):
-        if hasattr(obj, 'msg_count'):
-            return obj.msg_count
-        return Message.objects.filter(sender=obj, is_ai=False).count()
+        return obj.msg_count
 
     @extend_schema_field(serializers.CharField())
     def get_subscription(self, obj):

@@ -5,16 +5,18 @@ from django.db import transaction
 from datetime import timedelta
 from .models import User, OneTimePassword
 from .tasks import send_otp_email_task
+from wingman.constants import OTP_LENGTH
 
 logger = logging.getLogger(__name__)
 
 def generate_otp():
-    return ''.join([str(secrets.randbelow(10)) for _ in range(4)])
+    return ''.join([str(secrets.randbelow(10)) for _ in range(OTP_LENGTH)])
 
 def send_otp_via_email(email):
-    otp_code = generate_otp()
     try:
+        otp_code = generate_otp()
         user = User.objects.get(email=email)
+        
         OneTimePassword.objects.update_or_create(
             user=user,
             defaults={
@@ -25,7 +27,7 @@ def send_otp_via_email(email):
         transaction.on_commit(lambda: send_otp_email_task.delay(email, otp_code))
         return True, "OTP sent successfully"
     except User.DoesNotExist:
-        return False, "User not found"
+        return True, "OTP sent successfully" 
     except Exception as e:
         logger.error(f"Error in send_otp_via_email: {str(e)}")
         return False, "Failed to generate OTP"

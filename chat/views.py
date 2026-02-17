@@ -6,13 +6,10 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.throttling import UserRateThrottle
 from django.core.cache import cache
-from django.db.models import Max, Count
-from django.utils.decorators import method_decorator
-from django.views.decorators.cache import cache_page
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema
 
-from .models import ChatSession, Message
+from .models import ChatSession
 from .serializers import (
     ChatSessionListSerializer,
     ChatSessionDetailSerializer,
@@ -40,7 +37,7 @@ class ChatSessionViewSet(viewsets.GenericViewSet,
     serializer_class = ChatSessionListSerializer
     lookup_field = 'conversation_id'
     filter_backends = [filters.SearchFilter]
-    search_fields = ['title', 'messages__text']
+    search_fields = ['title']
 
     def get_queryset(self):
         if getattr(self, 'swagger_fake_view', False):
@@ -52,9 +49,7 @@ class ChatSessionViewSet(viewsets.GenericViewSet,
             'target_profile'
         ).prefetch_related(
             'events'
-        ).annotate(
-            last_updated=Max('messages__created_at')
-        ).order_by('-updated_at').distinct()
+        ).order_by('-updated_at')
     
     def get_object(self):
         conversation_id = self.kwargs.get('conversation_id')
@@ -71,10 +66,6 @@ class ChatSessionViewSet(viewsets.GenericViewSet,
         elif self.action == 'rename':
             return ChatSessionUpdateSerializer
         return ChatSessionListSerializer
-
-    @method_decorator(cache_page(60))
-    def list(self, request, *args, **kwargs):
-        return super().list(request, *args, **kwargs)
 
     def retrieve(self, request, *args, **kwargs):
         conversation_id = kwargs.get('conversation_id')
@@ -99,7 +90,7 @@ class ChatSessionViewSet(viewsets.GenericViewSet,
 
     @action(detail=True, methods=['get'])
     def history(self, request, conversation_id=None):
-        cache_key = f"chat_history:{conversation_id}"
+        cache_key = f"chat_history:{conversation_id}:{request.user.id}"
         cached_data = cache.get(cache_key)
         if cached_data:
             return Response(cached_data)
@@ -107,7 +98,7 @@ class ChatSessionViewSet(viewsets.GenericViewSet,
         session = self.get_object()
         messages = session.messages.only(
             'id', 'is_ai', 'text', 'image', 'audio',
-            'ocr_extracted_text', 'tokens_used', 'created_at'
+            'ocr_extracted_text', 'tokens_used', 'created_at', 'processing_status'
         ).order_by('created_at')
         
         serializer = MessageSerializer(messages, many=True, context={'request': request})
@@ -177,32 +168,24 @@ class ChatStatsView(APIView):
     permission_classes = [IsAuthenticated]
     throttle_classes = [UserRateThrottle]
 
-    @method_decorator(cache_page(300))
     @extend_schema(summary="Get User Chat Stats", responses={200: dict})
     def get(self, request):
         user = request.user
-        stats = ChatSession.objects.filter(user=user).aggregate(
-            total_sessions=Count('id'),
-            total_messages=Count('messages')
-        )
         
-        user_messages = Message.objects.filter(sender=user, is_ai=False).count()
-        ai_messages = Message.objects.filter(session__user=user, is_ai=True).count()
+        cache_key = f"chat_stats:{user.id}"
+        cached = cache.get(cache_key)
+        if cached: return Response(cached)
         
-        total_tokens = 0
-        if user.is_premium:
-            from django.db.models import Sum
-            total_tokens = Message.objects.filter(
-                session__user=user,
-                is_ai=True
-            ).aggregate(
-                total=Sum('tokens_used')
-            )['total'] or 0
+        total_sessions = ChatSession.objects.filter(user=user).count()
+        user_messages = user.msg_count
+        ai_messages = 0
         
-        return Response({
-            "total_sessions": stats['total_sessions'],
-            "total_messages": stats['total_messages'],
+        stats = {
+            "total_sessions": total_sessions,
+            "total_messages": user_messages,
             "user_messages": user_messages,
             "ai_messages": ai_messages,
-            "total_tokens_used": total_tokens,
-        })
+            "total_tokens_used": user.tokens_used,
+        }
+        cache.set(cache_key, stats, 300)
+        return Response(stats)

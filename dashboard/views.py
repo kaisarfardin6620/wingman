@@ -4,7 +4,6 @@ from django.db.models import Q
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.utils.decorators import method_decorator
-from django.views.decorators.cache import cache_page
 from rest_framework.views import APIView
 from rest_framework import viewsets, status
 from rest_framework.response import Response
@@ -35,11 +34,16 @@ class DashboardAnalyticsView(APIView):
     permission_classes = [IsAdminUser]
     throttle_classes = [AdminThrottle]
 
-    @method_decorator(cache_page(60))
     @extend_schema(summary="Get Dashboard Analytics", responses={200: DashboardStatsSerializer})
     def get(self, request):
+        cache_key = "admin_dashboard_stats"
+        cached = cache.get(cache_key)
+        if cached: return Response(cached)
+        
         data = DashboardService.get_analytics()
-        return Response(DashboardStatsSerializer(data).data)
+        serializer = DashboardStatsSerializer(data)
+        cache.set(cache_key, serializer.data, 60)
+        return Response(serializer.data)
 
 class AdminUserViewSet(viewsets.ModelViewSet):
     serializer_class = AdminUserListSerializer

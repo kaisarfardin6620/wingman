@@ -33,11 +33,7 @@ class DashboardService:
         )
         graph_data = [{"month": e['month'].strftime('%b %Y'), "count": e['count']} for e in monthly_data if e['month']]
 
-        recent_users_qs = (
-            User.objects
-            .annotate(usage_count=Count('message', filter=Q(message__is_ai=False)))
-            .order_by('-date_joined')[:5]
-        )
+        recent_users_qs = User.objects.all().order_by('-date_joined')[:5]
         
         recent_users = []
         for user in recent_users_qs:
@@ -47,7 +43,7 @@ class DashboardService:
                 "email": user.email,
                 "profile_image": user.profile_image.url if user.profile_image else None,
                 "subscription": "Premium" if user.is_premium else "Free",
-                "usage_count": user.usage_count,
+                "usage_count": user.msg_count,
                 "status": "Active" if user.is_active else "Inactive",
             }
             recent_users.append(user_data)

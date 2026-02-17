@@ -9,12 +9,12 @@ logger = logging.getLogger(__name__)
 def initialize_firebase():
     try:
         if not firebase_admin._apps:
-            cred_path = os.getenv('FIREBASE_CREDENTIALS_PATH', 'serviceAccountKey.json')
-            if os.path.exists(cred_path):
+            cred_path = os.environ.get('FIREBASE_CREDENTIALS_PATH')
+            if cred_path and os.path.exists(cred_path):
                 cred = credentials.Certificate(cred_path)
                 firebase_admin.initialize_app(cred)
             else:
-                logger.warning(f"Firebase credentials not found at {cred_path}")
+                logger.warning("Firebase credentials not found or path not set")
     except Exception as e:
         logger.error(f"Firebase initialization error: {e}")
 
@@ -44,6 +44,7 @@ def send_push_notification(user, title, body, data=None):
             return
 
         tokens = [d.token for d in devices]
+        if not tokens: return
         
         message = messaging.MulticastMessage(
             notification=messaging.Notification(

@@ -40,6 +40,8 @@ CSRF_COOKIE_SAMESITE = 'Lax'
 SESSION_COOKIE_AGE = 1209600
 
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+OPENAI_MODEL_NAME = os.getenv('OPENAI_MODEL_NAME', 'gpt-4o')
+OPENAI_MODEL_MINI = os.getenv('OPENAI_MODEL_MINI', 'gpt-4o-mini')
 SERVER_BASE_URL = os.getenv('SERVER_BASE_URL', 'http://127.0.0.1:8000')
 
 INSTALLED_APPS = [
@@ -349,10 +351,11 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = int(os.getenv('MAX_UPLOAD_SIZE', 5242880))
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-CORS_ALLOW_ALL_ORIGINS = DEBUG
-if not CORS_ALLOW_ALL_ORIGINS:
-    cors_origins = os.getenv("CORS_ALLOWED_ORIGINS", "")
-    CORS_ALLOWED_ORIGINS = [origin.strip() for origin in cors_origins.split(",") if origin.strip()]
+CORS_ALLOW_ALL_ORIGINS = False
+cors_origins = os.getenv("CORS_ALLOWED_ORIGINS", "")
+CORS_ALLOWED_ORIGINS = [origin.strip() for origin in cors_origins.split(",") if origin.strip()]
+if DEBUG and not CORS_ALLOWED_ORIGINS:
+    CORS_ALLOWED_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
 CORS_ALLOW_HEADERS = list(default_headers) + [
     'authorization',
@@ -393,10 +396,6 @@ LOGGING = {
             "()": structlog.stdlib.ProcessorFormatter,
             "processor": structlog.processors.JSONRenderer(),
         },
-        "verbose": {
-            "format": "[{levelname}] {asctime} {name} {module} {process:d} {thread:d} {message}",
-            "style": "{",
-        },
     },
     "handlers": {
         "console": {
@@ -432,7 +431,6 @@ ACCOUNT_SIGNUP_FIELDS = ['email']
 ACCOUNT_USERNAME_REQUIRED = False
 ACCOUNT_EMAIL_REQUIRED = True
 ACCOUNT_USER_MODEL_USERNAME_FIELD = None
-ACCOUNT_LOGIN_METHODS = {'email'}
 
 ADMINS = [
     (os.getenv('ADMIN_NAME', 'Admin'), os.getenv('ADMIN_EMAIL', '')),
@@ -451,7 +449,12 @@ if USE_AWS:
     AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
     AWS_STORAGE_BUCKET_NAME = os.getenv('AWS_STORAGE_BUCKET_NAME')
     AWS_S3_REGION_NAME = os.getenv('AWS_S3_REGION_NAME')
-    AWS_S3_CUSTOM_DOMAIN = f'{AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com'
+    
+    if AWS_S3_REGION_NAME == 'us-east-1':
+        AWS_S3_CUSTOM_DOMAIN = f'{AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com'
+    else:
+        AWS_S3_CUSTOM_DOMAIN = f'{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com'
+        
     AWS_S3_OBJECT_PARAMETERS = {
         'CacheControl': 'max-age=14400',
     }
@@ -486,6 +489,6 @@ else:
             "BACKEND": "django.core.files.storage.FileSystemStorage",
         },
         "staticfiles": {
-            "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
         },
     }

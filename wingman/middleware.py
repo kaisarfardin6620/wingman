@@ -13,8 +13,9 @@ logger = logging.getLogger(__name__)
 @database_sync_to_async
 def get_user(token_key):
     try:
-        UntypedToken(token_key)
         token = AccessToken(token_key)
+        token.verify()
+        
         user_id = token.payload.get('user_id')
         if not user_id:
             return AnonymousUser()

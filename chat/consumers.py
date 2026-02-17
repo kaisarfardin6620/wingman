@@ -5,6 +5,7 @@ from channels.db import database_sync_to_async
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from django.core.cache import cache
+from django.db import transaction, models
 from core.models import TargetProfile, GlobalConfig
 from .models import ChatSession, Message
 from .tasks import generate_ai_response, generate_chat_title
@@ -49,6 +50,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
             await self.accept()
 
     async def disconnect(self, close_code):
+        if hasattr(self, 'conversation_id') and hasattr(self, 'user'):
+            lock_key = f"ai_processing_lock:{self.conversation_id}:{self.user.id}"
+            await database_sync_to_async(cache.delete)(lock_key)
+            
         if self.room_group_name:
             await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
 
@@ -115,7 +120,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             self.room_group_name = f'chat_{self.conversation_id}'
             await self.channel_layer.group_add(self.room_group_name, self.channel_name)
 
-        lock_key = f"ai_processing_lock:{session.id}"
+        lock_key = f"ai_processing_lock:{session.id}:{self.user.id}"
         
         if not await self.acquire_lock(lock_key, 60):
             await self.send(text_data=json.dumps({
@@ -133,7 +138,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 'messages': history
             }))
 
-        user_msg = await self.save_message(session, message_text)
+        user_msg = await self.save_message_and_trigger_ai(session, message_text, selected_tone, created)
 
         await self.send(text_data=json.dumps({
             'type': 'new_message',
@@ -146,11 +151,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 'created_at': str(user_msg.created_at)
             }
         }))
-
-        generate_ai_response.delay(session.id, message_text, selected_tone)
-        
-        if created:
-            generate_chat_title.delay(session.id, message_text)
         
         await self.invalidate_session_cache(session.conversation_id)
 
@@ -183,7 +183,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def get_chat_history_cached(self, session):
-        cache_key = f"chat_history:{session.conversation_id}"
+        cache_key = f"chat_history:{session.conversation_id}:{self.user.id}"
         cached = cache.get(cache_key)
         if cached: 
             return cached
@@ -247,7 +247,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         return session, True
 
     @database_sync_to_async
-    def save_message(self, session, text):
+    def save_message_and_trigger_ai(self, session, text, selected_tone, created):
         message = Message.objects.create(
             session=session, 
             sender=self.user, 
@@ -256,9 +256,16 @@ class ChatConsumer(AsyncWebsocketConsumer):
             processing_status='completed'
         )
         session.update_preview()
+        User.objects.filter(pk=self.user.pk).update(msg_count=models.F('msg_count') + 1)
+        
+        transaction.on_commit(lambda: generate_ai_response.delay(session.id, text, selected_tone))
+        
+        if created:
+            transaction.on_commit(lambda: generate_chat_title.delay(session.id, text))
+            
         return message
 
     @database_sync_to_async
     def invalidate_session_cache(self, conversation_id):
         cache.delete(f"chat_session:{conversation_id}:{self.user.id}")
-        cache.delete(f"chat_history:{conversation_id}")
+        cache.delete(f"chat_history:{conversation_id}:{self.user.id}")

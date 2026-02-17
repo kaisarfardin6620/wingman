@@ -6,14 +6,16 @@ from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from django.conf import settings
 from django.core.cache import cache
-from django.db import transaction
+from django.db import transaction, models
 from openai import OpenAI, OpenAIError, RateLimitError, APIConnectionError, InternalServerError, BadRequestError
 from .models import ChatSession, Message, DetectedEvent
 from .services import AIService
 from core.models import UserSettings, TargetProfile
 from core.utils import send_push_notification
+from django.contrib.auth import get_user_model
 from django.utils import timezone
 
+User = get_user_model()
 logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
@@ -43,6 +45,7 @@ def send_ws_message(session_id, data):
 def generate_ai_response(self, session_id, user_text, selected_tone=None):
     client = OpenAI(api_key=settings.OPENAI_API_KEY)
     lock_key = f"ai_processing_lock:{session_id}"
+    ai_msg = None
     
     try:
         session = ChatSession.objects.select_related('user', 'target_profile').get(id=session_id)
@@ -67,7 +70,7 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None):
         messages_payload = AIService.prepare_context(session, system_prompt)
         
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model=settings.OPENAI_MODEL_NAME,
             messages=messages_payload,
             max_tokens=1000,
             timeout=OPENAI_TIMEOUT,
@@ -83,8 +86,9 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None):
         ai_msg.processing_status = 'completed'
         ai_msg.save()
         
+        User.objects.filter(pk=session.user.pk).update(tokens_used=models.F('tokens_used') + tokens_used)
         session.update_preview()
-        cache.delete(f"chat_history:{session.conversation_id}")
+        cache.delete(f"chat_history:{session.conversation_id}:{session.user.id}")
         
         send_ws_message(session.conversation_id, {
             'id': ai_msg.id, 
@@ -109,10 +113,6 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None):
             data={"conversation_id": str(session.conversation_id)}
         )
         
-        user_msg_count = session.messages.filter(is_ai=False).count()
-        if user_msg_count == 1:
-            generate_chat_title.delay(session.id, user_text)
-        
         if any(word in user_text.lower() for word in ['tomorrow', 'tonight', 'meet', 'date', 'clock', 'pm', 'am', 'schedule']):
             intent_engine.delay(session.id, user_text)
         
@@ -121,13 +121,17 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None):
 
         return ai_msg.id
 
+    except ChatSession.DoesNotExist:
+        logger.error(f"ChatSession {session_id} not found in generate_ai_response")
+        return
+        
     except BadRequestError as e:
         logger.error(f"OpenAI Bad Request (Non-Retryable): {e}")
-        if 'ai_msg' in locals():
+        if ai_msg:
             ai_msg.processing_status = 'failed'
             ai_msg.text = "Error: Request too long or invalid."
             ai_msg.save()
-            send_ws_message(session_id, {'id': ai_msg.id, 'status': 'failed', 'text': ai_msg.text})
+            send_ws_message(session.conversation_id, {'id': ai_msg.id, 'status': 'failed', 'text': ai_msg.text})
     
     except (RateLimitError, APIConnectionError, InternalServerError) as e:
         logger.warning(f"OpenAI Network/Rate Error (Retrying): {e}")
@@ -135,14 +139,15 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None):
         
     except Exception as e:
         logger.error(f"AI System Error: {e}", exc_info=True)
-        if 'ai_msg' in locals():
+        if ai_msg and 'session' in locals():
             ai_msg.processing_status = 'failed'
             ai_msg.text = "System Error."
             ai_msg.save()
-            send_ws_message(session_id, {'id': ai_msg.id, 'status': 'failed', 'text': "System Error."})
+            send_ws_message(session.conversation_id, {'id': ai_msg.id, 'status': 'failed', 'text': "System Error."})
 
     finally:
-        cache.delete(lock_key)
+        if 'session' in locals():
+            cache.delete(f"ai_processing_lock:{session.id}:{session.user.id}")
 
 @shared_task(bind=True, max_retries=2, autoretry_for=(OpenAIError,))
 def analyze_screenshot_task(self, message_id):
@@ -168,7 +173,7 @@ def analyze_screenshot_task(self, message_id):
             return
 
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model=settings.OPENAI_MODEL_NAME,
             messages=[{
                 "role": "user", 
                 "content": [
@@ -186,7 +191,7 @@ def analyze_screenshot_task(self, message_id):
         message.processing_status = 'completed'
         message.save(update_fields=['ocr_extracted_text', 'processing_status'])
         
-        cache.delete(f"chat_history:{message.session.conversation_id}")
+        cache.delete(f"chat_history:{message.session.conversation_id}:{message.session.user.id}")
         
         send_ws_message(message.session.conversation_id, {
             'id': message.id, 
@@ -197,11 +202,13 @@ def analyze_screenshot_task(self, message_id):
         
     except Exception as e: 
         logger.error(f"OCR Error for message {message_id}: {e}")
-        message.processing_status = 'failed'
-        message.save(update_fields=['processing_status'])
-        send_ws_message(message.session.conversation_id, {
-            'id': message.id, 'status': 'failed', 'type': 'analysis_failed'
-        })
+        try:
+            message.processing_status = 'failed'
+            message.save(update_fields=['processing_status'])
+            send_ws_message(message.session.conversation_id, {
+                'id': message.id, 'status': 'failed', 'type': 'analysis_failed'
+            })
+        except: pass
 
 @shared_task(bind=True, max_retries=2, autoretry_for=(OpenAIError,))
 def transcribe_audio_task(self, message_id):
@@ -228,7 +235,7 @@ def transcribe_audio_task(self, message_id):
         message.processing_status = 'completed'
         message.save(update_fields=['text', 'processing_status'])
         
-        cache.delete(f"chat_history:{message.session.conversation_id}")
+        cache.delete(f"chat_history:{message.session.conversation_id}:{message.session.user.id}")
         
         send_ws_message(message.session.conversation_id, {
             'id': message.id, 
@@ -242,11 +249,13 @@ def transcribe_audio_task(self, message_id):
         
     except Exception as e:
         logger.error(f"Transcription Error for message {message_id}: {e}")
-        message.processing_status = 'failed'
-        message.save(update_fields=['processing_status'])
-        send_ws_message(message.session.conversation_id, {
-            'id': message.id, 'status': 'failed', 'type': 'transcription_failed'
-        })
+        try:
+            message.processing_status = 'failed'
+            message.save(update_fields=['processing_status'])
+            send_ws_message(message.session.conversation_id, {
+                'id': message.id, 'status': 'failed', 'type': 'transcription_failed'
+            })
+        except: pass
 
 @shared_task(bind=True, max_retries=2, autoretry_for=(OpenAIError,))
 def profile_target_engine(self, session_id, latest_text):
@@ -262,7 +271,9 @@ def profile_target_engine(self, session_id, latest_text):
                 f"Extract new likes, preferences, mentions. Return JSON."
             )
             response = client.chat.completions.create(
-                model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"}
+                model=settings.OPENAI_MODEL_MINI, 
+                messages=[{"role": "user", "content": prompt}], 
+                response_format={"type": "json_object"}
             )
             data = json.loads(response.choices[0].message.content)
             
@@ -296,7 +307,7 @@ def linguistic_engine(self, user_id, session_id):
         if not full_sample: return
         
         response = client.chat.completions.create(
-            model="gpt-4o-mini", 
+            model=settings.OPENAI_MODEL_MINI, 
             messages=[{"role": "user", "content": f"Analyze style: {full_sample[:2000]}"}], 
             max_tokens=150
         )
@@ -312,22 +323,26 @@ def intent_engine(self, session_id, user_text):
         session = ChatSession.objects.get(id=session_id)
         prompt = f"Detect event in: {user_text}. Return JSON: is_event, title, start_time_iso, description, has_conflict."
         response = client.chat.completions.create(
-            model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"}
+            model=settings.OPENAI_MODEL_MINI, 
+            messages=[{"role": "user", "content": prompt}], 
+            response_format={"type": "json_object"}
         )
         data = json.loads(response.choices[0].message.content)
         
         if data.get('is_event'):
             from dateutil import parser
             reminder_dt = None
-            if data.get('start_time_iso'):
-                try: reminder_dt = parser.parse(data['start_time_iso'])
+            start_time_str = data.get('start_time_iso') or data.get('start_time')
+            
+            if start_time_str:
+                try: reminder_dt = parser.parse(start_time_str)
                 except: pass
 
             DetectedEvent.objects.create(
                 session=session, 
                 title=data.get('title', 'Event')[:255], 
                 description=data.get('description', '')[:500], 
-                start_time=data.get('start_time', '')[:100],
+                start_time=start_time_str if start_time_str else str(timezone.now()),
                 has_conflict=data.get('has_conflict', False),
                 reminder_datetime=reminder_dt
             )
@@ -341,7 +356,7 @@ def generate_chat_title(self, session_id, first_message):
     try:
         session = ChatSession.objects.get(id=session_id)
         response = client.chat.completions.create(
-            model="gpt-4o-mini", 
+            model=settings.OPENAI_MODEL_MINI, 
             messages=[{"role": "system", "content": "Generate 3-5 word title."}, {"role": "user", "content": first_message[:200]}], 
             max_tokens=20
         )

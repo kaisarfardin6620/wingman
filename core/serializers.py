@@ -39,6 +39,12 @@ class UserSettingsSerializer(serializers.ModelSerializer):
             'linguistic_style': {'read_only': True}
         }
 
+    def validate_passcode(self, value):
+        if value:
+            if len(value) != 4 or not value.isdigit():
+                raise serializers.ValidationError("Passcode must be exactly 4 digits.")
+        return value
+
     def update(self, instance, validated_data):
         if 'passcode' in validated_data:
             validated_data['passcode'] = make_password(validated_data['passcode'])
@@ -74,10 +80,12 @@ class ChangePasscodeSerializer(serializers.Serializer):
     def validate(self, attrs):
         if attrs['new_passcode'] != attrs['confirm_passcode']:
             raise serializers.ValidationError({"new_passcode": "Passcodes do not match."})
+        if not attrs['new_passcode'].isdigit():
+             raise serializers.ValidationError({"new_passcode": "Passcode must be digits."})
         return attrs
     
 class NotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notification
         fields = ['id', 'title', 'body', 'data', 'is_read', 'created_at']
-        read_only_fields = ['id', 'title', 'body', 'data', 'created_at']    
+        read_only_fields = ['id', 'title', 'body', 'data', 'created_at']

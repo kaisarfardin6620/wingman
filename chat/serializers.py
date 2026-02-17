@@ -27,15 +27,7 @@ class ChatSessionListSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(serializers.CharField(allow_null=True))
     def get_last_message(self, obj):
-        last_msg = obj.messages.last()
-        if last_msg:
-            if last_msg.text:
-                return last_msg.text[:50] + "..." 
-            if last_msg.image:
-                return "[Image]"
-            if last_msg.audio:
-                return "[Voice Note]"
-        return ""
+        return obj.last_message_preview or ""
 
 class ChatSessionDetailSerializer(serializers.ModelSerializer):
     target_profile = TargetProfileSerializer(read_only=True)

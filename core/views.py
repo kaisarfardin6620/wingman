@@ -7,12 +7,10 @@ from rest_framework.throttling import UserRateThrottle
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
-from django.utils.decorators import method_decorator
-from django.views.decorators.cache import cache_page
 from django.shortcuts import get_object_or_404
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.decorators import action
-from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiParameter
+from drf_spectacular.utils import extend_schema, extend_schema_view
 from authentication.utils import send_otp_via_email, verify_otp_via_email
 from .models import Tone, Persona, UserSettings, TargetProfile, FCMDevice, Notification
 from .serializers import (
@@ -34,10 +32,14 @@ class ConfigDataView(APIView):
     permission_classes = [IsAuthenticated]
     throttle_classes = [ConfigThrottle]
 
-    @method_decorator(cache_page(300))
     @extend_schema(summary="Get Global Config (Tones/Personas)", responses={200: dict})
     def get(self, request):
+        cache_key = "global_core_config"
+        cached = cache.get(cache_key)
+        if cached: return Response(cached)
+        
         data = CoreService.get_config_data()
+        cache.set(cache_key, data, CACHE_TTL_CONFIG_DATA)
         return Response(data)
 
 class UserSettingsView(APIView):
@@ -46,11 +48,15 @@ class UserSettingsView(APIView):
 
     @extend_schema(summary="Get User Settings", responses={200: UserSettingsSerializer})
     def get(self, request):
+        cache_key = f"user_settings:{request.user.id}"
+        cached = cache.get(cache_key)
+        if cached: return Response(cached)
+        
         settings_obj = CoreService.get_user_settings(request.user)
         if isinstance(settings_obj, dict):
              return Response(settings_obj)
         serializer = UserSettingsSerializer(settings_obj)
-        cache.set(f"user_settings:{request.user.id}", serializer.data, CACHE_TTL_USER_SETTINGS)
+        cache.set(cache_key, serializer.data, CACHE_TTL_USER_SETTINGS)
         return Response(serializer.data)
 
     @extend_schema(summary="Update User Settings", request=UserSettingsSerializer, responses={200: UserSettingsSerializer})

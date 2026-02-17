@@ -11,6 +11,14 @@ logger = structlog.get_logger(__name__)
 
 class AIService:
     @staticmethod
+    def count_tokens(text):
+        try:
+            encoding = tiktoken.get_encoding("cl100k_base")
+            return len(encoding.encode(text))
+        except:
+            return len(text) // 4
+
+    @staticmethod
     def build_system_prompt(user, session, selected_tone=None):
         user_settings, _ = UserSettings.objects.get_or_create(user=user)
         
@@ -64,18 +72,29 @@ class AIService:
         return system_prompt
 
     @staticmethod
-    def prepare_context(session, system_prompt, max_tokens=8000):
-        recent_messages = session.messages.only('is_ai', 'text', 'ocr_extracted_text').order_by('-created_at')[:40] 
+    def prepare_context(session, system_prompt, max_tokens=2000):
+        system_tokens = AIService.count_tokens(system_prompt)
+        available_tokens = max_tokens - system_tokens
+        
+        recent_messages = session.messages.only('is_ai', 'text', 'ocr_extracted_text').order_by('-created_at')[:30] 
         
         raw_history = []
-        for msg in reversed(list(recent_messages)):
+        current_tokens = 0
+        
+        for msg in recent_messages:
             role = "assistant" if msg.is_ai else "user"
             content = msg.text or ""
             if msg.ocr_extracted_text: 
                 content += f"\n[IMAGE: {msg.ocr_extracted_text}]"
+            
+            msg_tokens = AIService.count_tokens(content)
+            if current_tokens + msg_tokens > available_tokens:
+                break
+                
+            current_tokens += msg_tokens
             raw_history.append({"role": role, "content": content})
 
-        return [{"role": "system", "content": system_prompt}] + raw_history
+        return [{"role": "system", "content": system_prompt}] + list(reversed(raw_history))
 
 
 class ChatService:
@@ -84,10 +103,9 @@ class ChatService:
         conversation_id = session.conversation_id
         session.delete()
         
-        # Invalidate caches
         cache.delete(f"chat_session:{conversation_id}:{user_id}")
         cache.delete(f"chat_session_detail:{conversation_id}:{user_id}")
-        cache.delete(f"chat_history:{conversation_id}")
+        cache.delete(f"chat_history:{conversation_id}:{user_id}")
         logger.info("chat_session_deleted", conversation_id=str(conversation_id), user_id=user_id)
 
     @staticmethod
@@ -100,7 +118,7 @@ class ChatService:
         for cid in conversation_ids:
             cache.delete(f"chat_session:{cid}:{user.id}")
             cache.delete(f"chat_session_detail:{cid}:{user.id}")
-            cache.delete(f"chat_history:{cid}")
+            cache.delete(f"chat_history:{cid}:{user.id}")
             
         logger.info("all_chats_cleared", user_id=user.id, count=count)
         return count
@@ -157,7 +175,7 @@ class ChatService:
         if audio:
             transcribe_audio_task.delay(msg.id)
             
-        cache.delete(f"chat_history:{session.conversation_id}")
+        cache.delete(f"chat_history:{session.conversation_id}:{user.id}")
         logger.info("chat_file_uploaded", message_id=msg.id, type="image" if image else "audio")
         
         return MessageSerializer(msg, context=request_context).data, None

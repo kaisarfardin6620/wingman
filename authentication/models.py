@@ -20,6 +20,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_premium = models.BooleanField(default=False, db_index=True)
     date_joined = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    msg_count = models.PositiveIntegerField(default=0)
+    tokens_used = models.PositiveIntegerField(default=0)
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = []
     objects = CustomUserManager()

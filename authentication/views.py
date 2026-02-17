@@ -6,6 +6,8 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 from django.core.cache import cache
+from django.contrib.auth import get_user_model
+from django.db import transaction
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
 from allauth.socialaccount.providers.oauth2.client import OAuth2Client
@@ -13,12 +15,18 @@ from allauth.socialaccount.providers.apple.views import AppleOAuth2Adapter
 from allauth.socialaccount.providers.apple.client import AppleOAuth2Client
 from allauth.socialaccount.models import SocialLogin
 from core.utils import send_push_notification
-from .serializers import *
+from .serializers import (
+    SignupSerializer, VerifyOTPSerializer, LoginSerializer,
+    ResendOTPSerializer, ForgotPasswordSerializer,
+    ResetPasswordSerializer, UserProfileSerializer,
+    UserChangePasswordSerializer, EmailChangeVerifySerializer,
+    DeleteAccountSerializer
+)
 from .services import AuthService
 from .utils import send_otp_via_email
 from wingman.constants import CACHE_TTL_USER_PROFILE
-from django.db import transaction
 
+User = get_user_model()
 logger = structlog.get_logger(__name__)
 
 class OTPRateThrottle(AnonRateThrottle):
@@ -26,6 +34,7 @@ class OTPRateThrottle(AnonRateThrottle):
 
 class RegisterView(APIView):
     throttle_classes = [AnonRateThrottle]
+    permission_classes = [AllowAny]
 
     @extend_schema(
         request=SignupSerializer,
@@ -39,14 +48,16 @@ class RegisterView(APIView):
                 result = AuthService.register_user(serializer.validated_data)
                 return Response(result, status=status.HTTP_201_CREATED)
             except Exception as e:
+                logger.error("registration_failed", error=str(e))
                 return Response(
                     {"error": "Registration failed. Please try again later."}, 
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    status=status.HTTP_400_BAD_REQUEST
                 )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class VerifyOTPView(APIView):
     throttle_classes = [OTPRateThrottle]
+    permission_classes = [AllowAny]
 
     @extend_schema(
         request=VerifyOTPSerializer,
@@ -67,6 +78,7 @@ class VerifyOTPView(APIView):
 
 class LoginView(APIView):
     throttle_classes = [AnonRateThrottle]
+    permission_classes = [AllowAny]
 
     @extend_schema(
         request=LoginSerializer,
@@ -90,6 +102,7 @@ class LoginView(APIView):
 
 class ResendOTPView(APIView):
     throttle_classes = [OTPRateThrottle]
+    permission_classes = [AllowAny]
 
     @extend_schema(
         request=ResendOTPSerializer,
@@ -100,17 +113,18 @@ class ResendOTPView(APIView):
         serializer = ResendOTPSerializer(data=request.data)
         if serializer.is_valid():
             email = serializer.validated_data['email']
-            if not User.objects.filter(email=email).exists():
-                return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
-
-            success, message = send_otp_via_email(email)
-            if success:
-                return Response({"message": message}, status=status.HTTP_200_OK)
-            return Response({"error": message}, status=status.HTTP_400_BAD_REQUEST)
+            if User.objects.filter(email=email).exists():
+                send_otp_via_email(email)
+            
+            return Response(
+                {"message": "If the email exists, an OTP has been sent."}, 
+                status=status.HTTP_200_OK
+            )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class ForgotPasswordView(APIView):
     throttle_classes = [OTPRateThrottle]
+    permission_classes = [AllowAny]
 
     @extend_schema(
         request=ForgotPasswordSerializer,
@@ -120,14 +134,16 @@ class ForgotPasswordView(APIView):
     def post(self, request):
         serializer = ForgotPasswordSerializer(data=request.data)
         if serializer.is_valid():
-            success, message = AuthService.forgot_password(serializer.validated_data['email'])
-            if success:
-                return Response({"message": message}, status=status.HTTP_200_OK)
-            return Response({"error": message}, status=status.HTTP_400_BAD_REQUEST)
+            AuthService.forgot_password(serializer.validated_data['email'])
+            return Response(
+                {"message": "If the email exists, an OTP has been sent."}, 
+                status=status.HTTP_200_OK
+            )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class ResetPasswordConfirmView(APIView):
     throttle_classes = [OTPRateThrottle]
+    permission_classes = [AllowAny]
 
     @extend_schema(
         request=ResetPasswordSerializer,
