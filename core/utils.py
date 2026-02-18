@@ -37,8 +37,6 @@ def send_push_notification(user, title, body, data=None):
         if hasattr(user, 'settings') and user.settings.hide_notifications:
             return
 
-        initialize_firebase()
-        
         devices = user.fcm_devices.all()
         if not devices.exists():
             return

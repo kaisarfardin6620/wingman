@@ -3,10 +3,11 @@ import base64
 import logging
 from celery import shared_task
 from channels.layers import get_channel_layer
-from asgiref.sync import async_to_sync
+from asgiref.sync import async_to_sync, sync_to_async
 from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction, models
+from django.utils.asyncio import async_unsafe
 from openai import OpenAI, OpenAIError, RateLimitError, APIConnectionError, InternalServerError, BadRequestError
 from .models import ChatSession, Message, DetectedEvent
 from .services import AIService
@@ -354,16 +355,26 @@ def intent_engine(self, session_id, user_text):
 def generate_chat_title(self, session_id, first_message):
     client = OpenAI(api_key=settings.OPENAI_API_KEY)
     try:
-        session = ChatSession.objects.get(id=session_id)
         response = client.chat.completions.create(
             model=settings.OPENAI_MODEL_MINI, 
             messages=[{"role": "system", "content": "Generate 3-5 word title."}, {"role": "user", "content": first_message[:200]}], 
             max_tokens=20
         )
-        session.title = response.choices[0].message.content.strip().replace('"', '')[:252]
-        session.save(update_fields=['title'])
+        title = response.choices[0].message.content.strip().replace('"', '')[:252]
+        _update_session_title(session_id, title)
     except Exception as e: 
         logger.error(f"Title Gen Error: {e}")
+
+@async_unsafe
+def _update_session_title(session_id, title):
+    try:
+        session = ChatSession.objects.get(id=session_id)
+        session.title = title
+        session.save(update_fields=['title'])
+        cache.delete(f"chat_session:{session.conversation_id}:{session.user.id}")
+        cache.delete(f"chat_session_detail:{session.conversation_id}:{session.user.id}")
+    except ChatSession.DoesNotExist:
+        pass
 
 @shared_task
 def send_reminder_push(event_id):

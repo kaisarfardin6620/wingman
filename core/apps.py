@@ -6,3 +6,5 @@ class CoreConfig(AppConfig):
 
     def ready(self):
         import core.signals
+        from .utils import initialize_firebase
+        initialize_firebase()

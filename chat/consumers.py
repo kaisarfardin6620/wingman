@@ -18,6 +18,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         self.room_group_name = None
         self.user = self.scope.get("user")
+        self.session_db_id = None
         
         if not self.user or self.user.is_anonymous:
             await self.accept()
@@ -29,6 +30,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         if self.conversation_id:
             session = await self.get_session_cached(self.conversation_id)
             if session:
+                self.session_db_id = session.id
                 self.room_group_name = f'chat_{self.conversation_id}'
                 await self.channel_layer.group_add(self.room_group_name, self.channel_name)
                 await self.accept()
@@ -50,8 +52,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
             await self.accept()
 
     async def disconnect(self, close_code):
-        if hasattr(self, 'conversation_id') and hasattr(self, 'user'):
-            lock_key = f"ai_processing_lock:{self.conversation_id}:{self.user.id}"
+        if hasattr(self, 'session_db_id') and self.session_db_id and hasattr(self, 'user'):
+            lock_key = f"ai_processing_lock:{self.session_db_id}:{self.user.id}"
             await database_sync_to_async(cache.delete)(lock_key)
             
         if self.room_group_name:
@@ -120,6 +122,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             self.room_group_name = f'chat_{self.conversation_id}'
             await self.channel_layer.group_add(self.room_group_name, self.channel_name)
 
+        self.session_db_id = session.id
         lock_key = f"ai_processing_lock:{session.id}:{self.user.id}"
         
         if not await self.acquire_lock(lock_key, 60):
