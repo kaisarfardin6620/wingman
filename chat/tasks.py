@@ -262,7 +262,7 @@ def profile_target_engine(self, session_id, latest_text):
     client = OpenAI(api_key=settings.OPENAI_API_KEY)
     try:
         with transaction.atomic():
-            session = ChatSession.objects.select_related('target_profile').select_for_update().get(id=session_id)
+            session = ChatSession.objects.select_for_update().get(id=session_id)
             if not session.target_profile: return
             tp = TargetProfile.objects.select_for_update().get(id=session.target_profile.id)
             

@@ -55,7 +55,7 @@ def send_push_notification(user, title, body, data=None):
             tokens=tokens,
         )
         
-        response = messaging.send_multicast(message)
+        response = messaging.send_all(message)
         logger.info(f"Sent push notification to {user.email}: {response.success_count} success")
         
         if response.failure_count > 0:
