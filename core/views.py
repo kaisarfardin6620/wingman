@@ -178,8 +178,16 @@ class FCMTokenView(APIView):
     @extend_schema(summary="Register FCM Token", request=dict, responses={200: dict})
     def post(self, request):
         token = request.data.get('token')
+        device_type = request.data.get('device_type', 'android') # Handle device type if sent
+
         if token:
-            FCMDevice.objects.update_or_create(user=request.user, token=token)
+            FCMDevice.objects.update_or_create(
+                token=token,
+                defaults={
+                    'user': request.user,
+                    'device_type': device_type
+                }
+            )
             return Response({"message": "Token registered"})
         return Response({"error": "Token required"}, status=400)
 
