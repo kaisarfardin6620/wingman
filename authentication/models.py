@@ -22,6 +22,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     updated_at = models.DateTimeField(auto_now=True)
     msg_count = models.PositiveIntegerField(default=0)
     tokens_used = models.PositiveIntegerField(default=0)
+    social_id = models.CharField(max_length=255, null=True, blank=True, unique=True, db_index=True)
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = []
     objects = CustomUserManager()

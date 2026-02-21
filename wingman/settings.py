@@ -18,6 +18,9 @@ SECRET_KEY = os.getenv('SECRET_KEY')
 if not SECRET_KEY:
     raise ValueError("SECRET_KEY must be set in environment variables")
 
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+APPLE_CLIENT_ID = os.getenv("APPLE_CLIENT_ID")
+
 DEBUG = os.getenv('DEBUG', 'False').strip().lower() == 'true'
 
 ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")
@@ -164,29 +167,6 @@ SOCIALACCOUNT_EMAIL_REQUIRED = os.getenv('SOCIALACCOUNT_EMAIL_REQUIRED', 'True')
 SOCIALACCOUNT_QUERY_EMAIL = os.getenv('SOCIALACCOUNT_QUERY_EMAIL', 'True').strip().lower() == 'true'
 SOCIALACCOUNT_STORE_TOKENS = os.getenv('SOCIALACCOUNT_STORE_TOKENS', 'False').strip().lower() == 'true'
 
-SOCIALACCOUNT_PROVIDERS = {
-    'google': {
-        'APP': {
-            'client_id': os.getenv('GOOGLE_CLIENT_ID'),
-            'secret': os.getenv('GOOGLE_CLIENT_SECRET'),
-            'key': ''
-        },
-        'SCOPE': [
-            'profile',
-            'email',
-        ],
-        'AUTH_PARAMS': {
-            'access_type': 'online',
-        }
-    },
-    'apple': {
-        'APP': {
-            'client_id': os.getenv('APPLE_CLIENT_ID'),
-            'secret': os.getenv('APPLE_KEY_ID'),
-            'key': os.getenv('APPLE_PRIVATE_KEY'),
-        }
-    }
-}
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
