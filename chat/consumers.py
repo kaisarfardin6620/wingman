@@ -40,13 +40,13 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     'type': 'chat_history',
                     'conversation_id': self.conversation_id,
                     'messages': history
-                }))
+                }, ensure_ascii=False))
             else:
                 await self.accept()
                 await self.send(text_data=json.dumps({
                     'type': 'error',
                     'message': 'Conversation not found'
-                }))
+                }, ensure_ascii=False))
                 await self.close(code=4004)
         else:
             await self.accept()
@@ -66,7 +66,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             await self.send(text_data=json.dumps({
                 'type': 'error',
                 'message': 'Invalid JSON'
-            }))
+            }, ensure_ascii=False))
             return
 
         message_text = data.get('message', '').strip()
@@ -78,7 +78,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             await self.send(text_data=json.dumps({
                 'type': 'error',
                 'message': 'Message cannot be empty'
-            }))
+            }, ensure_ascii=False))
             return
 
         error_message = await self.check_limits_cached(message_text)
@@ -86,7 +86,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             await self.send(text_data=json.dumps({
                 'type': 'error', 
                 'message': error_message
-            }))
+            }, ensure_ascii=False))
             return
 
         session = None
@@ -99,7 +99,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 await self.send(text_data=json.dumps({
                     'type': 'error',
                     'message': 'Session expired or not found'
-                }))
+                }, ensure_ascii=False))
                 return
         
         elif incoming_conversation_id:
@@ -113,7 +113,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 await self.send(text_data=json.dumps({
                     'type': 'error',
                     'message': 'Invalid conversation ID'
-                }))
+                }, ensure_ascii=False))
                 return
         
         else:
@@ -130,7 +130,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 'type': 'error',
                 'code': 'ai_busy', 
                 'message': 'AI is thinking. Please wait.'
-            }))
+            }, ensure_ascii=False))
             return
         
         if send_history_flag:
@@ -139,7 +139,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 'type': 'chat_history',
                 'conversation_id': self.conversation_id,
                 'messages': history
-            }))
+            }, ensure_ascii=False))
 
         user_msg = await self.save_message_and_trigger_ai(session, message_text, selected_tone, created)
 
@@ -153,7 +153,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 'status': 'completed',
                 'created_at': str(user_msg.created_at)
             }
-        }))
+        }, ensure_ascii=False))
         
         await self.invalidate_session_cache(session.conversation_id)
 
@@ -162,7 +162,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             'type': 'message_update',
             'conversation_id': event['conversation_id'],
             'message': event['message']
-        }))
+        }, ensure_ascii=False))
 
     @database_sync_to_async
     def acquire_lock(self, key, timeout):

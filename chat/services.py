@@ -22,11 +22,19 @@ class AIService:
     def build_system_prompt(user, session, selected_tone=None):
         user_settings, _ = UserSettings.objects.get_or_create(user=user)
         
-        lang_code = user_settings.language
-        lang_name = dict(settings.LANGUAGES).get(lang_code, 'English')
-        lang_instruction = f"Respond in {lang_name}."
-        if lang_code == 'hi':
-            lang_instruction = "Respond in Hinglish mixed with English where natural."
+        lang_instruction = (
+            "CRITICAL LANGUAGE INSTRUCTION:\n"
+            "1. You are a Polyglot Wingman. Your FIRST task is to DETECT the language and script of the user's input.\n"
+            "2. Respond in the EXACT same language and script the user is using.\n"
+            "3. MATCH THE SCRIPT STRICTLY:\n"
+            "   - If User types: 'Hola, ¿cómo estás?' (Spanish) -> Respond in Spanish.\n"
+            "   - If User types: 'Bonjour' (French) -> Respond in French.\n"
+            "   - If User types: 'Salaam, kayfa halak?' (Arabic Transliterated) -> Respond in Transliterated Arabic.\n"
+            "   - If User types: 'كيف حالك' (Arabic Native) -> Respond in Native Arabic.\n"
+            "   - If User types: 'Tumi kemon acho?' (Banglish) -> Respond in Banglish.\n"
+            "   - If User types: 'Kya haal hai?' (Hinglish) -> Respond in Hinglish.\n"
+            "4. Do NOT automatically revert to English unless the user speaks English.\n"
+        )
 
         if user_settings.active_persona:
             persona_prompt = f"You are {user_settings.active_persona.name}. {user_settings.active_persona.description}"
