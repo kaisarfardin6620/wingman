@@ -21,45 +21,49 @@ def initialize_firebase():
 def send_push_notification(user, title, body, data=None):
     try:
         from .models import Notification
-        Notification.objects.create(
-            user=user,
-            title=title,
-            body=body,
-            data=data or {}
-        )
+        Notification.objects.create(user=user, title=title, body=body, data=data or {})
     except Exception as e:
         logger.error(f"Failed to save notification to DB for user {user.id}: {e}")
 
-    if not user.is_active:
-        return
+    if not user.is_active: return
 
     try:
-        if hasattr(user, 'settings') and user.settings.hide_notifications:
-            return
+        if hasattr(user, 'settings') and user.settings.hide_notifications: return
 
         devices = user.fcm_devices.all()
-        if not devices.exists():
-            return
-
+        if not devices.exists(): return
         tokens = [d.token for d in devices]
         if not tokens: return
         
+        safe_data = {str(k): str(v) for k, v in (data or {}).items()}
+
         message = messaging.MulticastMessage(
             notification=messaging.Notification(
                 title=title,
                 body=body,
             ),
-            data=data or {},
+            android=messaging.AndroidConfig(
+                priority='high',
+                notification=messaging.AndroidNotification(
+                    sound='default'
+                )
+            ),
+            apns=messaging.APNSConfig(
+                payload=messaging.APNSPayload(
+                    aps=messaging.Aps(sound='default')
+                )
+            ),
+            data=safe_data,
             tokens=tokens,
         )
-        response = messaging.send_multicast(message)
+        
+        response = messaging.send_each_for_multicast(message)
         logger.info(f"Sent push notification to {user.email}: {response.success_count} success")
         
         if response.failure_count > 0:
             for idx, resp in enumerate(response.responses):
-                if not resp.success:
-                    if resp.exception.code == 'NOT_FOUND':
-                        devices[idx].delete()
+                if not resp.success and resp.exception.code == 'NOT_FOUND':
+                    devices[idx].delete()
                         
     except Exception as e:
         logger.error(f"Push notification error for {user.email}: {e}")
