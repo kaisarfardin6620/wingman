@@ -1,7 +1,6 @@
 from django.contrib import admin
 from .models import Tone, Persona, UserSettings, TargetProfile, GlobalConfig, FCMDevice, Notification
 
-
 @admin.register(Tone)
 class ToneAdmin(admin.ModelAdmin):
     list_display = ('name', 'is_active')
@@ -24,6 +23,9 @@ class GlobalConfigAdmin(admin.ModelAdmin):
 
     def has_add_permission(self, request):
         return not GlobalConfig.objects.exists()
+        
+    def has_delete_permission(self, request, obj=None):
+        return False
     
 @admin.register(FCMDevice)
 class FCMDeviceAdmin(admin.ModelAdmin):
@@ -38,4 +40,4 @@ class FCMDeviceAdmin(admin.ModelAdmin):
 class NotificationAdmin(admin.ModelAdmin):
     list_display = ('user', 'title', 'is_read', 'created_at')
     list_filter = ('is_read', 'created_at')
-    search_fields = ('user__email', 'title', 'body')    
+    search_fields = ('user__email', 'title', 'body')

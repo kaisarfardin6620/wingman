@@ -30,8 +30,8 @@ def send_push_notification(user, title, body, data=None):
     try:
         if hasattr(user, 'settings') and user.settings.hide_notifications: return
 
-        devices = user.fcm_devices.all()
-        if not devices.exists(): return
+        devices = list(user.fcm_devices.all())
+        if not devices: return
         tokens = [d.token for d in devices]
         if not tokens: return
         
@@ -45,12 +45,18 @@ def send_push_notification(user, title, body, data=None):
             android=messaging.AndroidConfig(
                 priority='high',
                 notification=messaging.AndroidNotification(
-                    sound='default'
+                    sound='default',
+                    channel_id='high_importance_channel', 
+                    click_action='FLUTTER_NOTIFICATION_CLICK',
                 )
             ),
             apns=messaging.APNSConfig(
                 payload=messaging.APNSPayload(
-                    aps=messaging.Aps(sound='default')
+                    aps=messaging.Aps(
+                        sound='default',
+                        content_available=True,
+                        mutable_content=True,
+                    )
                 )
             ),
             data=safe_data,
@@ -61,9 +67,13 @@ def send_push_notification(user, title, body, data=None):
         logger.info(f"Sent push notification to {user.email}: {response.success_count} success")
         
         if response.failure_count > 0:
+            from .models import FCMDevice
             for idx, resp in enumerate(response.responses):
-                if not resp.success and resp.exception.code == 'NOT_FOUND':
-                    devices[idx].delete()
+                if not resp.success:
+                    logger.error(f"FCM Error for token {tokens[idx][:15]}...: {resp.exception}")
+                    if resp.exception.code in ('NOT_FOUND', 'UNREGISTERED', 'INVALID_ARGUMENT'):
+                        failed_token = tokens[idx]
+                        FCMDevice.objects.filter(token=failed_token).delete()
                         
     except Exception as e:
         logger.error(f"Push notification error for {user.email}: {e}")

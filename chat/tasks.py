@@ -3,7 +3,7 @@ import base64
 import logging
 from celery import shared_task
 from channels.layers import get_channel_layer
-from asgiref.sync import async_to_sync, sync_to_async
+from asgiref.sync import async_to_sync
 from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction, models
@@ -45,7 +45,6 @@ def send_ws_message(session_id, data):
 )
 def generate_ai_response(self, session_id, user_text, selected_tone=None):
     client = OpenAI(api_key=settings.OPENAI_API_KEY)
-    lock_key = f"ai_processing_lock:{session_id}"
     ai_msg = None
     
     try:
@@ -81,6 +80,12 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None):
         
         ai_reply_json = response.choices[0].message.content
         tokens_used = response.usage.total_tokens if hasattr(response, 'usage') else 0
+
+        try:
+            parsed_reply = json.loads(ai_reply_json)
+        except json.JSONDecodeError:
+            parsed_reply = {"response_type": "text", "content": ai_reply_json}
+            ai_reply_json = json.dumps(parsed_reply)
         
         ai_msg.text = ai_reply_json
         ai_msg.tokens_used = tokens_used
@@ -100,11 +105,10 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None):
         })
         
         try:
-            parsed_reply = json.loads(ai_reply_json)
-            notification_body = parsed_reply.get('content', '')
+            notification_body = parsed_reply.get('content', 'New message received')
             if isinstance(notification_body, list):
                 notification_body = "Here are some suggestions for you."
-        except:
+        except Exception:
             notification_body = "New message received"
 
         send_push_notification(
@@ -130,7 +134,7 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None):
         logger.error(f"OpenAI Bad Request (Non-Retryable): {e}")
         if ai_msg:
             ai_msg.processing_status = 'failed'
-            ai_msg.text = "Error: Request too long or invalid."
+            ai_msg.text = json.dumps({"response_type": "text", "content": "Error: Request too long or invalid."})
             ai_msg.save()
             send_ws_message(session.conversation_id, {'id': ai_msg.id, 'status': 'failed', 'text': ai_msg.text})
     
@@ -142,12 +146,12 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None):
         logger.error(f"AI System Error: {e}", exc_info=True)
         if ai_msg and 'session' in locals():
             ai_msg.processing_status = 'failed'
-            ai_msg.text = "System Error."
+            ai_msg.text = json.dumps({"response_type": "text", "content": "System Error."})
             ai_msg.save()
-            send_ws_message(session.conversation_id, {'id': ai_msg.id, 'status': 'failed', 'text': "System Error."})
+            send_ws_message(session.conversation_id, {'id': ai_msg.id, 'status': 'failed', 'text': ai_msg.text})
 
     finally:
-        if 'session' in locals():
+        if 'session' in locals() and session:
             cache.delete(f"ai_processing_lock:{session.id}:{session.user.id}")
 
 @shared_task(bind=True, max_retries=2, autoretry_for=(OpenAIError,))
@@ -185,8 +189,12 @@ def analyze_screenshot_task(self, message_id):
             max_tokens=1000,
             response_format={"type": "json_object"}
         )
-        ai_content = json.loads(response.choices[0].message.content)
-        ocr_text = ai_content.get('extracted_text', '')
+        
+        try:
+            ai_content = json.loads(response.choices[0].message.content)
+            ocr_text = ai_content.get('extracted_text', '')
+        except json.JSONDecodeError:
+            ocr_text = ""
         
         message.ocr_extracted_text = ocr_text
         message.processing_status = 'completed'
@@ -209,7 +217,8 @@ def analyze_screenshot_task(self, message_id):
             send_ws_message(message.session.conversation_id, {
                 'id': message.id, 'status': 'failed', 'type': 'analysis_failed'
             })
-        except: pass
+        except Exception: 
+            pass
 
 @shared_task(bind=True, max_retries=2, autoretry_for=(OpenAIError,))
 def transcribe_audio_task(self, message_id):
@@ -256,7 +265,8 @@ def transcribe_audio_task(self, message_id):
             send_ws_message(message.session.conversation_id, {
                 'id': message.id, 'status': 'failed', 'type': 'transcription_failed'
             })
-        except: pass
+        except Exception: 
+            pass
 
 @shared_task(bind=True, max_retries=2, autoretry_for=(OpenAIError,))
 def profile_target_engine(self, session_id, latest_text):
@@ -276,7 +286,11 @@ def profile_target_engine(self, session_id, latest_text):
                 messages=[{"role": "user", "content": prompt}], 
                 response_format={"type": "json_object"}
             )
-            data = json.loads(response.choices[0].message.content)
+            
+            try:
+                data = json.loads(response.choices[0].message.content)
+            except json.JSONDecodeError:
+                data = {}
             
             updated = False
             def add_if_new(source_list, new_items):
@@ -328,7 +342,11 @@ def intent_engine(self, session_id, user_text):
             messages=[{"role": "user", "content": prompt}], 
             response_format={"type": "json_object"}
         )
-        data = json.loads(response.choices[0].message.content)
+        
+        try:
+            data = json.loads(response.choices[0].message.content)
+        except json.JSONDecodeError:
+            data = {}
         
         if data.get('is_event'):
             from dateutil import parser
@@ -337,7 +355,7 @@ def intent_engine(self, session_id, user_text):
             
             if start_time_str:
                 try: reminder_dt = parser.parse(start_time_str)
-                except: pass
+                except Exception: pass
 
             DetectedEvent.objects.create(
                 session=session, 

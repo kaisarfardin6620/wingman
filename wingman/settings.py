@@ -124,7 +124,7 @@ if DATABASE_URL:
     DATABASES = {
         'default': dj_database_url.parse(DATABASE_URL)
     }
-    DATABASES['default']['CONN_MAX_AGE'] = 0
+    DATABASES['default']['CONN_MAX_AGE'] = 60
     DATABASES['default']['CONN_HEALTH_CHECKS'] = True
     
     DATABASES['default']['OPTIONS'] = {
@@ -166,7 +166,6 @@ SOCIALACCOUNT_EMAIL_VERIFICATION = os.getenv('SOCIALACCOUNT_EMAIL_VERIFICATION',
 SOCIALACCOUNT_EMAIL_REQUIRED = os.getenv('SOCIALACCOUNT_EMAIL_REQUIRED', 'True').strip().lower() == 'true'
 SOCIALACCOUNT_QUERY_EMAIL = os.getenv('SOCIALACCOUNT_QUERY_EMAIL', 'True').strip().lower() == 'true'
 SOCIALACCOUNT_STORE_TOKENS = os.getenv('SOCIALACCOUNT_STORE_TOKENS', 'False').strip().lower() == 'true'
-
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
@@ -341,6 +340,7 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
     'authorization',
     'content-disposition',
     'ngrok-skip-browser-warning',
+    'x-device-id',
 ]
 
 CORS_ALLOW_CREDENTIALS = True

@@ -36,11 +36,17 @@ from google.auth.transport import requests as google_requests
 User = get_user_model()
 logger = structlog.get_logger(__name__)
 
-class OTPRateThrottle(AnonRateThrottle):
+class DeviceRateThrottle(AnonRateThrottle):
+    def get_cache_key(self, request, view):
+        device_id = request.headers.get('X-Device-ID')
+        ident = device_id if device_id else self.get_ident(request)
+        return self.cache_format % {'scope': self.scope, 'ident': ident}
+
+class OTPRateThrottle(DeviceRateThrottle):
     scope = 'otp' 
 
 class RegisterView(APIView):
-    throttle_classes = [AnonRateThrottle]
+    throttle_classes = [DeviceRateThrottle]
     permission_classes = [AllowAny]
 
     @extend_schema(
@@ -84,7 +90,7 @@ class VerifyOTPView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class LoginView(APIView):
-    throttle_classes = [AnonRateThrottle]
+    throttle_classes = [DeviceRateThrottle]
     permission_classes = [AllowAny]
 
     @extend_schema(
@@ -220,7 +226,7 @@ class UserProfileView(APIView):
 
 class GoogleLoginView(APIView):
     permission_classes = [AllowAny]
-    throttle_classes = [AnonRateThrottle]
+    throttle_classes = [DeviceRateThrottle]
 
     @extend_schema(
         request={"application/json": {"type": "object", "properties": {"id_token": {"type": "string"}}}},
@@ -315,7 +321,7 @@ class GoogleLoginView(APIView):
 
 class AppleLoginView(APIView):
     permission_classes = [AllowAny]
-    throttle_classes = [AnonRateThrottle]
+    throttle_classes = [DeviceRateThrottle]
 
     APPLE_KEYS_CACHE_KEY = "apple_public_keys"
     APPLE_KEYS_URL = "https://appleid.apple.com/auth/keys"
