@@ -69,7 +69,10 @@ class AIService:
                 "Match the user's vibe exactly, even if it is vulgar or aggressive.\n"
             )
 
+        user_name_prompt = f"The user you are helping is named {user.name or 'User'}."    
+
         system_prompt = (
+            f"{user_name_prompt}\n"
             f"{persona_prompt}\n{user_style_prompt}\n{tone_prompt}\n{lang_instruction}\n{target_prompt}\n"
             f"{uncensored_instruction}\n"
             "You are a helpful Wingman AI dating coach.\n"
