@@ -96,8 +96,8 @@ class ChatSessionViewSet(viewsets.GenericViewSet,
             return Response(cached_data)
         
         session = self.get_object()
-        messages = session.messages.only(
-            'id', 'is_ai', 'text', 'image', 'audio',
+        messages = session.messages.prefetch_related('images').only(
+            'id', 'is_ai', 'text', 'audio',
             'ocr_extracted_text', 'tokens_used', 'created_at', 'processing_status'
         ).order_by('created_at')
         
@@ -147,11 +147,17 @@ class ChatSessionImageUploadView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        serializer = MessageUploadSerializer(data=request.data)
+        data = request.data.copy()
+        if hasattr(request, 'FILES'):
+            images = request.FILES.getlist('images')
+            if images:
+                data.setlist('images', images)
+
+        serializer = MessageUploadSerializer(data=data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        data, error = ChatService.handle_file_upload(
+        response_data, error = ChatService.handle_file_upload(
             request.user, 
             session, 
             serializer.validated_data, 
@@ -161,12 +167,12 @@ class ChatSessionImageUploadView(APIView):
         if error:
             return Response({"error": error}, status=status.HTTP_429_TOO_MANY_REQUESTS)
             
-        return Response({"message": "File uploaded successfully", "data": data}, status=status.HTTP_201_CREATED)
+        return Response({"message": "Files uploaded successfully", "data": response_data}, status=status.HTTP_201_CREATED)
 
 
 class ChatStatsView(APIView):
     permission_classes = [IsAuthenticated]
-    throttle_classes = [UserRateThrottle]
+    throttle_classes =[UserRateThrottle]
 
     @extend_schema(summary="Get User Chat Stats", responses={200: dict})
     def get(self, request):

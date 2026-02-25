@@ -49,7 +49,7 @@ class ChatSession(models.Model):
         if last_msg:
             preview_text = last_msg.text
             if not preview_text:
-                if last_msg.image: preview_text = "[Image]"
+                if last_msg.images.exists(): preview_text = "[Image]"
                 elif last_msg.audio: preview_text = "[Voice Note]"
                 else: preview_text = ""
             
@@ -77,7 +77,7 @@ class ChatSession(models.Model):
             )
 
 class Message(models.Model):
-    STATUS_CHOICES = [
+    STATUS_CHOICES =[
         ('pending', 'Pending'),
         ('processing', 'Processing'),
         ('completed', 'Completed'),
@@ -99,7 +99,6 @@ class Message(models.Model):
     )
     is_ai = models.BooleanField(default=False, db_index=True)
     text = models.TextField(blank=True, null=True)
-    image = models.ImageField(upload_to='chat_uploads/', null=True, blank=True)
     audio = models.FileField(upload_to='chat_audio/', null=True, blank=True)
     ocr_extracted_text = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
@@ -119,7 +118,7 @@ class Message(models.Model):
     class Meta:
         verbose_name = "Message"
         verbose_name_plural = "Messages"
-        ordering = ['created_at']
+        ordering =['created_at']
         indexes = [
             models.Index(fields=['session', 'created_at']),
             models.Index(fields=['sender', 'is_ai', '-created_at']),
@@ -128,6 +127,19 @@ class Message(models.Model):
 
     def __str__(self):
         return f"Message {self.id} - {'AI' if self.is_ai else 'User'} ({self.processing_status})"
+
+class MessageImage(models.Model):
+    message = models.ForeignKey(Message, on_delete=models.CASCADE, related_name='images')
+    image = models.ImageField(upload_to='chat_uploads/')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Message Image"
+        verbose_name_plural = "Message Images"
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f"Image for Message {self.message.id}"
 
 class DetectedEvent(models.Model):
     session = models.ForeignKey(

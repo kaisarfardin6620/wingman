@@ -20,6 +20,7 @@ services:
       - .env
     environment:
       - RUNNING_IN_DOCKER=true
+      - DJANGO_ALLOW_ASYNC_UNSAFE=true
     volumes:
       - static_volume:/app/staticfiles
       - ./media:/app/media 
@@ -37,6 +38,7 @@ services:
       - .env
     environment:
       - RUNNING_IN_DOCKER=true
+      - DJANGO_ALLOW_ASYNC_UNSAFE=true
     volumes:
       - ./media:/app/media
       - ./logs:/app/logs
@@ -55,6 +57,7 @@ services:
       - .env
     environment:
       - RUNNING_IN_DOCKER=true
+      - DJANGO_ALLOW_ASYNC_UNSAFE=true
     volumes:
       - ./media:/app/media
       - ./logs:/app/logs
@@ -73,6 +76,7 @@ services:
       - .env
     environment:
       - RUNNING_IN_DOCKER=true
+      - DJANGO_ALLOW_ASYNC_UNSAFE=true
     volumes:
       - ./media:/app/media
       - ./logs:/app/logs

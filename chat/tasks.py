@@ -118,7 +118,7 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None):
             data={"conversation_id": str(session.conversation_id)}
         )
         
-        if any(word in user_text.lower() for word in ['tomorrow', 'tonight', 'meet', 'date', 'clock', 'pm', 'am', 'schedule']):
+        if any(word in user_text.lower() for word in['tomorrow', 'tonight', 'meet', 'date', 'clock', 'pm', 'am', 'schedule']):
             intent_engine.delay(session.id, user_text)
         
         if session.target_profile:
@@ -158,8 +158,8 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None):
 def analyze_screenshot_task(self, message_id):
     client = OpenAI(api_key=settings.OPENAI_API_KEY)
     try:
-        message = Message.objects.select_related('session').get(id=message_id)
-        if not message.image: 
+        message = Message.objects.select_related('session').prefetch_related('images').get(id=message_id)
+        if not message.images.exists(): 
             return
             
         message.processing_status = 'processing'
@@ -168,24 +168,31 @@ def analyze_screenshot_task(self, message_id):
             'id': message.id, 'status': 'processing', 'type': 'analysis_update'
         })
 
-        try:
-            with message.image.open('rb') as image_file:
-                base64_image = base64.b64encode(image_file.read()).decode('utf-8')
-        except Exception as e: 
-            logger.error(f"Failed to read image for message {message_id}: {e}")
+        content =[
+            {"type": "text", "text": "Extract all visible text from these images and return it as JSON with key 'extracted_text'. Merge the text chronologically or logically."}
+        ]
+
+        valid_images = 0
+        for img_obj in message.images.all():
+            try:
+                with img_obj.image.open('rb') as image_file:
+                    base64_image = base64.b64encode(image_file.read()).decode('utf-8')
+                    content.append({
+                        "type": "image_url", 
+                        "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
+                    })
+                    valid_images += 1
+            except Exception as e: 
+                logger.error(f"Failed to read image {img_obj.id} for message {message_id}: {e}")
+
+        if valid_images == 0:
             message.processing_status = 'failed'
-            message.save()
+            message.save(update_fields=['processing_status'])
             return
 
         response = client.chat.completions.create(
             model=settings.OPENAI_MODEL_NAME,
-            messages=[{
-                "role": "user", 
-                "content": [
-                    {"type": "text", "text": "Extract all visible text from this image and return it as JSON with key 'extracted_text'."}, 
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-                ]
-            }],
+            messages=[{"role": "user", "content": content}],
             max_tokens=1000,
             response_format={"type": "json_object"}
         )

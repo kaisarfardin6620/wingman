@@ -3,7 +3,7 @@ import tiktoken
 from django.core.cache import cache
 from django.conf import settings
 from django.utils import timezone
-from .models import ChatSession, Message
+from .models import ChatSession, Message, MessageImage
 from core.models import UserSettings, GlobalConfig
 from .serializers import MessageSerializer
 
@@ -78,7 +78,7 @@ class AIService:
             "You are a helpful Wingman AI dating coach.\n"
             "IMPORTANT: You must return a valid JSON object.\n"
             "Structure: { 'response_type': 'text' | 'suggestions', 'content': string | array of strings }\n"
-            "If returning suggestions, 'content' MUST be a list of strings: ['Option 1', 'Option 2', ...]\n"
+            "If returning suggestions, 'content' MUST be a list of strings:['Option 1', 'Option 2', ...]\n"
         )
         return system_prompt
 
@@ -89,7 +89,7 @@ class AIService:
         
         recent_messages = session.messages.only('is_ai', 'text', 'ocr_extracted_text').order_by('-created_at')[:30] 
         
-        raw_history = []
+        raw_history =[]
         current_tokens = 0
         
         for msg in recent_messages:
@@ -138,7 +138,9 @@ class ChatService:
     def handle_file_upload(user, session, validated_data, request_context=None):
         from .tasks import analyze_screenshot_task, transcribe_audio_task
         
-        if not user.is_premium:
+        images = validated_data.get('images',[])
+        
+        if not user.is_premium and images:
             today = timezone.now().date()
             cache_key = f"upload_count:{user.id}:{today}"
             upload_count = cache.get(cache_key)
@@ -147,8 +149,8 @@ class ChatService:
                 upload_count = Message.objects.filter(
                     sender=user,
                     created_at__date=today,
-                    image__isnull=False
-                ).count()
+                    images__isnull=False
+                ).distinct().count()
                 cache.set(cache_key, upload_count, 3600)
             
             config = GlobalConfig.load()
@@ -156,37 +158,38 @@ class ChatService:
                 logger.warning("upload_limit_reached", user_id=user.id)
                 return None, f"Daily upload limit reached ({config.ocr_limit}/day). Upgrade to Premium."
 
-        image = validated_data.get('image')
         audio = validated_data.get('audio')
         text = validated_data.get('text', '')
 
         if not text:
-            if image: text = "[Screenshot Uploaded]"
+            if images: text = "[Screenshot Uploaded]"
             elif audio: text = "[Audio Uploaded]"
 
-        status_val = 'pending' if (image or audio) else 'completed'
+        status_val = 'pending' if (images or audio) else 'completed'
 
         msg = Message.objects.create(
             session=session,
             sender=user,
             is_ai=False,
             text=text,
-            image=image,
             audio=audio,
             processing_status=status_val
         )
+        
+        for img in images:
+            MessageImage.objects.create(message=msg, image=img)
+            
         session.update_preview()
         
-        if not user.is_premium:
-            cache.set(f"upload_count:{user.id}:{timezone.now().date()}", 
-                      (upload_count or 0) + 1, 3600)
+        if not user.is_premium and images:
+            cache.set(f"upload_count:{user.id}:{timezone.now().date()}", (upload_count or 0) + 1, 3600)
         
-        if image:
+        if images:
             analyze_screenshot_task.delay(msg.id)
         if audio:
             transcribe_audio_task.delay(msg.id)
             
         cache.delete(f"chat_history:{session.conversation_id}:{user.id}")
-        logger.info("chat_file_uploaded", message_id=msg.id, type="image" if image else "audio")
+        logger.info("chat_file_uploaded", message_id=msg.id, types=[("image" if images else ""), ("audio" if audio else "")])
         
         return MessageSerializer(msg, context=request_context).data, None

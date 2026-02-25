@@ -191,17 +191,17 @@ class ChatConsumer(AsyncWebsocketConsumer):
         if cached: 
             return cached
         
-        messages = session.messages.only(
-            'id', 'text', 'is_ai', 'image', 'ocr_extracted_text', 'created_at', 'processing_status'
+        messages = session.messages.prefetch_related('images').only(
+            'id', 'text', 'is_ai', 'ocr_extracted_text', 'created_at', 'processing_status'
         ).order_by('created_at')
         
-        history_data = []
+        history_data =[]
         for msg in messages:
             history_data.append({
                 'id': msg.id,
                 'text': msg.text,
                 'is_ai': msg.is_ai,
-                'image': msg.image.url if msg.image else None,
+                'images':[{"id": img.id, "image_url": img.image.url} for img in msg.images.all()],
                 'ocr_text': msg.ocr_extracted_text,
                 'status': msg.processing_status,
                 'created_at': str(msg.created_at)

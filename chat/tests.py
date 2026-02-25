@@ -2,7 +2,7 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 from django.contrib.auth import get_user_model
-from chat.models import ChatSession, Message
+from chat.models import ChatSession, Message, MessageImage
 from unittest.mock import patch
 from io import BytesIO
 from PIL import Image
@@ -43,18 +43,26 @@ class ChatAPITests(APITestCase):
     def test_image_upload(self, mock_task):
         url = reverse('session-upload', args=[self.session.conversation_id])
         
-        file_obj = BytesIO()
-        img = Image.new('RGB', (100, 100), color='red')
-        img.save(file_obj, format='JPEG')
-        file_obj.seek(0)
+        file_obj1 = BytesIO()
+        img1 = Image.new('RGB', (100, 100), color='red')
+        img1.save(file_obj1, format='JPEG')
+        file_obj1.seek(0)
         
-        image = SimpleUploadedFile("test.jpg", file_obj.read(), content_type="image/jpeg")
+        file_obj2 = BytesIO()
+        img2 = Image.new('RGB', (100, 100), color='blue')
+        img2.save(file_obj2, format='JPEG')
+        file_obj2.seek(0)
         
-        response = self.client.post(url, {'image': image}, format='multipart')
+        image1 = SimpleUploadedFile("test1.jpg", file_obj1.read(), content_type="image/jpeg")
+        image2 = SimpleUploadedFile("test2.jpg", file_obj2.read(), content_type="image/jpeg")
+        
+        response = self.client.post(url, {'images': [image1, image2]}, format='multipart')
         
         if response.status_code == 400:
             print(f"Upload Error: {response.data}")
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertTrue(Message.objects.filter(session=self.session, image__isnull=False).exists())
+        msg = Message.objects.filter(session=self.session).last()
+        self.assertIsNotNone(msg)
+        self.assertEqual(msg.images.count(), 2)
         mock_task.assert_called_once()
