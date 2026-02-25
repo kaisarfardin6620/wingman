@@ -208,6 +208,9 @@ def analyze_screenshot_task(self, message_id):
             'ocr_text': ocr_text,
             'status': 'completed'
         })
+
+        if message.text and message.text != "[Screenshot Uploaded]":
+            generate_ai_response.delay(message.session.id, message.text)
         
     except Exception as e: 
         logger.error(f"OCR Error for message {message_id}: {e}")
