@@ -7,7 +7,6 @@ from asgiref.sync import async_to_sync
 from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction, models
-from django.utils.asyncio import async_unsafe
 from openai import OpenAI, OpenAIError, RateLimitError, APIConnectionError, InternalServerError, BadRequestError
 from .models import ChatSession, Message, DetectedEvent
 from .services import AIService
@@ -311,9 +310,9 @@ def profile_target_engine(self, session_id, latest_text):
                         has_change = True
                 return has_change
 
-            if data.get('new_likes') and add_if_new(tp.what_she_likes, data['new_likes']): updated = True
-            if data.get('new_preferences') and add_if_new(tp.preferences, data['new_preferences']): updated = True
-            if data.get('new_mentions'):
+            if data.get('new_likes') and isinstance(data['new_likes'], list) and add_if_new(tp.what_she_likes, data['new_likes']): updated = True
+            if data.get('new_preferences') and isinstance(data['new_preferences'], list) and add_if_new(tp.preferences, data['new_preferences']): updated = True
+            if data.get('new_mentions') and isinstance(data['new_mentions'], str):
                 if not tp.her_mentions: tp.her_mentions = data['new_mentions']; updated = True
                 elif data['new_mentions'] not in tp.her_mentions: tp.her_mentions += f" | {data['new_mentions']}"; updated = True
                     
@@ -393,7 +392,6 @@ def generate_chat_title(self, session_id, first_message):
     except Exception as e: 
         logger.error(f"Title Gen Error: {e}")
 
-@async_unsafe
 def _update_session_title(session_id, title):
     try:
         session = ChatSession.objects.get(id=session_id)

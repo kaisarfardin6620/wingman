@@ -24,6 +24,11 @@ class Tone(models.Model):
         cache.delete('active_tones')
         cache.delete('global_config')
 
+    def delete(self, *args, **kwargs):
+        cache.delete('active_tones')
+        cache.delete('global_config')
+        super().delete(*args, **kwargs)
+
 class Persona(models.Model):
     name = models.CharField(max_length=50, unique=True, db_index=True)
     description = models.TextField()
@@ -45,6 +50,11 @@ class Persona(models.Model):
         cache.delete('active_personas')
         cache.delete('global_config')
 
+    def delete(self, *args, **kwargs):
+        cache.delete('active_personas')
+        cache.delete('global_config')
+        super().delete(*args, **kwargs)
+
 class GlobalConfig(models.Model):
     daily_free_limit = models.IntegerField(default=10)
     max_chat_length = models.IntegerField(default=1000)
@@ -59,6 +69,10 @@ class GlobalConfig(models.Model):
         self.pk = 1
         super().save(*args, **kwargs)
         cache.delete('global_config')
+
+    def delete(self, *args, **kwargs):
+        cache.delete('global_config')
+        super().delete(*args, **kwargs)
 
     @classmethod
     def load(cls):
@@ -127,6 +141,10 @@ class UserSettings(models.Model):
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
         cache.delete(f"user_settings:{self.user.id}")
+
+    def delete(self, *args, **kwargs):
+        cache.delete(f"user_settings:{self.user.id}")
+        super().delete(*args, **kwargs)
 
 class TargetProfile(models.Model):
     user = models.ForeignKey(

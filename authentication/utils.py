@@ -37,8 +37,7 @@ def verify_otp_via_email(email, otp_input):
         user = User.objects.get(email=email)
         otp_record = OneTimePassword.objects.get(user=user)
         
-        expiry_time = otp_record.created_at + timedelta(minutes=5)
-        if timezone.now() > expiry_time:
+        if otp_record.is_expired():
             return False, "OTP expired"
 
         if otp_record.otp == otp_input:

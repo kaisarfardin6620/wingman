@@ -11,7 +11,7 @@ logger = structlog.get_logger(__name__)
 
 class DashboardService:
     @staticmethod
-    def get_analytics():
+    def get_analytics(request=None):
         user_stats = User.objects.aggregate(
             total=Count('id'),
             premium=Count('id', filter=Q(is_premium=True)),
@@ -37,11 +37,17 @@ class DashboardService:
         
         recent_users = []
         for user in recent_users_qs:
+            profile_image_url = None
+            if user.profile_image and hasattr(user.profile_image, 'url'):
+                profile_image_url = user.profile_image.url
+                if request:
+                    profile_image_url = request.build_absolute_uri(profile_image_url)
+
             user_data = {
                 "id": user.id,
                 "name": user.name or "",
                 "email": user.email,
-                "profile_image": user.profile_image.url if user.profile_image else None,
+                "profile_image": profile_image_url,
                 "subscription": "Premium" if user.is_premium else "Free",
                 "usage_count": user.msg_count,
                 "status": "Active" if user.is_active else "Inactive",

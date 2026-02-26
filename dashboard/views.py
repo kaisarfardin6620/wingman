@@ -40,7 +40,7 @@ class DashboardAnalyticsView(APIView):
         cached = cache.get(cache_key)
         if cached: return Response(cached)
         
-        data = DashboardService.get_analytics()
+        data = DashboardService.get_analytics(request)
         serializer = DashboardStatsSerializer(data)
         cache.set(cache_key, serializer.data, 60)
         return Response(serializer.data)
@@ -82,21 +82,14 @@ class AdminUserViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def reset_user_password(self, request, pk=None):
         import secrets
-        from django.core.mail import send_mail
-        from django.conf import settings
+        from authentication.tasks import send_admin_reset_password_email_task
         user = self.get_object()
         new_pass = secrets.token_urlsafe(10) 
         try:
             with transaction.atomic():
                 user.set_password(new_pass)
                 user.save(update_fields=['password'])
-                send_mail(
-                    subject="Your Password has been Reset by Admin",
-                    message=f"Hello {user.name or 'User'},\n\nYour Admin has reset your password.\n\nTemporary Password: {new_pass}\n\nPlease log in and change this immediately.",
-                    from_email=settings.EMAIL_HOST_USER,
-                    recipient_list=[user.email],
-                    fail_silently=False,
-                )
+                send_admin_reset_password_email_task.delay(user.email, user.name, new_pass)
         except Exception as e:
             return Response({"error": f"Failed to reset password: {str(e)}"}, status=500)
         send_push_notification(user, "Security Alert", "Admin reset your password. Check your email.")
