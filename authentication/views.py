@@ -22,7 +22,7 @@ from .serializers import (
     ResendOTPSerializer, ForgotPasswordSerializer,
     ResetPasswordSerializer, UserProfileSerializer,
     UserChangePasswordSerializer, EmailChangeVerifySerializer,
-    DeleteAccountSerializer
+    DeleteAccountSerializer, LogoutSerializer
 )
 from .services import AuthService
 from .utils import send_otp_via_email
@@ -527,4 +527,34 @@ class DeleteAccountView(APIView):
                 logger.error("delete_account_failed", user_id=user.id, error=str(e))
                 return Response({"error": "Something went wrong."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class LogoutView(APIView):
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [UserRateThrottle]
+
+    @extend_schema(
+        request=LogoutSerializer,
+        responses={200: dict},
+        summary="Logout User"
+    )
+    def post(self, request):
+        serializer = LogoutSerializer(data=request.data)
+        if serializer.is_valid():
+            try:
+                refresh_token = serializer.validated_data['refresh_token']
+                token = RefreshToken(refresh_token)
+                token.blacklist()
+
+                fcm_token = serializer.validated_data.get('fcm_token')
+                if fcm_token:
+                    from core.models import FCMDevice
+                    FCMDevice.objects.filter(user=request.user, token=fcm_token).delete()
+
+                logger.info("user_logged_out", user_id=request.user.id)
+                return Response({"message": "Successfully logged out."}, status=status.HTTP_200_OK)
+            except Exception as e:
+                logger.error("logout_failed", user_id=request.user.id, error=str(e))
+                return Response({"error": "Invalid token or something went wrong."}, status=status.HTTP_400_BAD_REQUEST)
+            
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

@@ -257,3 +257,7 @@ class DeleteAccountSerializer(serializers.Serializer):
                 raise serializers.ValidationError({"password": "Incorrect password."})
         
         return attrs
+
+class LogoutSerializer(serializers.Serializer):
+    refresh_token = serializers.CharField(required=True)
+    fcm_token = serializers.CharField(required=False, allow_blank=True, allow_null=True)
