@@ -67,11 +67,24 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None, select
 
         system_prompt = AIService.build_system_prompt(session.user, session, selected_tone, selected_length)
         messages_payload = AIService.prepare_context(session, system_prompt)
+
+        if selected_length:
+            sl = selected_length.lower()
+            if sl in ('quick reply', 'short'):
+                max_tokens = 150
+            elif sl in ('balanced', 'medium'):
+                max_tokens = 400
+            elif sl in ('detailed', 'long'):
+                max_tokens = 800
+            else:
+                max_tokens = 1000
+        else:
+            max_tokens = 1000
         
         response = client.chat.completions.create(
             model=settings.OPENAI_MODEL_NAME,
             messages=messages_payload,
-            max_tokens=1000,
+            max_tokens=max_tokens,
             timeout=OPENAI_TIMEOUT,
             temperature=0.7,
             response_format={"type": "json_object"}
