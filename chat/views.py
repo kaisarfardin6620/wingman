@@ -1,3 +1,4 @@
+from requests import session
 import structlog
 from rest_framework import viewsets, mixins, parsers, status, filters
 from rest_framework.views import APIView
@@ -184,7 +185,8 @@ class ChatStatsView(APIView):
         
         total_sessions = ChatSession.objects.filter(user=user).count()
         user_messages = user.msg_count
-        ai_messages = 0
+        from .models import Message
+        ai_messages = Message.objects.filter(session__user=user, is_ai=True).count()
         
         stats = {
             "total_sessions": total_sessions,
