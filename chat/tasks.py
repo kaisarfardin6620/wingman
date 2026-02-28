@@ -42,7 +42,7 @@ def send_ws_message(session_id, data):
     autoretry_for=(RateLimitError, APIConnectionError, InternalServerError),
     retry_backoff=True
 )
-def generate_ai_response(self, session_id, user_text, selected_tone=None):
+def generate_ai_response(self, session_id, user_text, selected_tone=None, selected_length=None):
     client = OpenAI(api_key=settings.OPENAI_API_KEY)
     ai_msg = None
     
@@ -65,7 +65,7 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None):
             'created_at': str(ai_msg.created_at)
         })
 
-        system_prompt = AIService.build_system_prompt(session.user, session, selected_tone)
+        system_prompt = AIService.build_system_prompt(session.user, session, selected_tone, selected_length)
         messages_payload = AIService.prepare_context(session, system_prompt)
         
         response = client.chat.completions.create(

@@ -73,6 +73,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         target_id = data.get('target_id')
         incoming_conversation_id = data.get('conversation_id')
         selected_tone = data.get('tone', None)
+        selected_length = data.get('selected_length', None)
 
         if not message_text:
             await self.send(text_data=json.dumps({
@@ -141,7 +142,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 'messages': history
             }, ensure_ascii=False))
 
-        user_msg = await self.save_message_and_trigger_ai(session, message_text, selected_tone, created)
+        user_msg = await self.save_message_and_trigger_ai(session, message_text, selected_tone, selected_length, created)
 
         await self.send(text_data=json.dumps({
             'type': 'new_message',
@@ -250,7 +251,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         return session, True
 
     @database_sync_to_async
-    def save_message_and_trigger_ai(self, session, text, selected_tone, created):
+    def save_message_and_trigger_ai(self, session, text, selected_tone, selected_length, created):
         message = Message.objects.create(
             session=session, 
             sender=self.user, 
@@ -261,7 +262,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         session.update_preview()
         User.objects.filter(pk=self.user.pk).update(msg_count=models.F('msg_count') + 1)
         
-        transaction.on_commit(lambda: generate_ai_response.delay(session.id, text, selected_tone))
+        transaction.on_commit(lambda: generate_ai_response.delay(session.id, text, selected_tone, selected_length))
         
         if created:
             transaction.on_commit(lambda: generate_chat_title.delay(session.id, text))

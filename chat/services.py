@@ -19,7 +19,7 @@ class AIService:
             return len(text) // 4
 
     @staticmethod
-    def build_system_prompt(user, session, selected_tone=None):
+    def build_system_prompt(user, session, selected_tone=None, selected_length=None):
         user_settings, _ = UserSettings.objects.get_or_create(user=user)
         
         lang_instruction = (
@@ -54,6 +54,17 @@ class AIService:
             else:
                 tone_prompt = "Keep the tone confident."
 
+        length_prompt = ""
+        if selected_length:
+            if selected_length.lower() == 'quick reply' or selected_length.lower() == 'short':
+                length_prompt = "LENGTH: Keep the response very short and punchy (1-2 sentences max)."
+            elif selected_length.lower() == 'balanced' or selected_length.lower() == 'medium':
+                length_prompt = "LENGTH: Keep the response balanced. Not too short, not too long."
+            elif selected_length.lower() == 'detailed' or selected_length.lower() == 'long':
+                length_prompt = "LENGTH: Provide a detailed and slightly longer response."
+            else:
+                 length_prompt = f"LENGTH: {selected_length}."
+
         target_prompt = ""
         if session.target_profile:
             tp = session.target_profile
@@ -73,12 +84,12 @@ class AIService:
 
         system_prompt = (
             f"{user_name_prompt}\n"
-            f"{persona_prompt}\n{user_style_prompt}\n{tone_prompt}\n{lang_instruction}\n{target_prompt}\n"
+            f"{persona_prompt}\n{user_style_prompt}\n{tone_prompt}\n{length_prompt}\n{lang_instruction}\n{target_prompt}\n"
             f"{uncensored_instruction}\n"
             "You are a helpful Wingman AI dating coach.\n"
-            "IMPORTANT: You must return a valid JSON object.\n"
+            "IMPORTANT: You must return a valid JSON object. Do not include markdown code block syntax (like ```json).\n"
             "Structure: { 'response_type': 'text' | 'suggestions', 'content': string | array of strings }\n"
-            "If returning suggestions, 'content' MUST be a list of strings:['Option 1', 'Option 2', ...]\n"
+            "If returning suggestions, 'content' MUST be a list of exactly 3 distinct, high-quality strings based on the user's tone and style: ['Option 1', 'Option 2', 'Option 3']\n"
         )
         return system_prompt
 
