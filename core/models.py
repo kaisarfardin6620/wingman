@@ -2,6 +2,7 @@ from django.db import models
 from django.conf import settings
 from django.contrib.auth.hashers import make_password, check_password
 from django.core.cache import cache
+import hashlib
 
 class Tone(models.Model):
     name = models.CharField(max_length=50, unique=True, db_index=True)
@@ -13,7 +14,7 @@ class Tone(models.Model):
     class Meta:
         verbose_name = "Tone"
         verbose_name_plural = "Tones"
-        ordering = ['name']
+        ordering =['name']
         indexes = [models.Index(fields=['is_active', 'name'])]
 
     def __str__(self):
@@ -84,7 +85,7 @@ class GlobalConfig(models.Model):
         return config
 
 class UserSettings(models.Model):
-    GOAL_CHOICES = [
+    GOAL_CHOICES =[
         ('Serious Relationship', 'Serious Relationship'),
         ('Casual Dating', 'Casual Dating'),
         ('Just Conversation', 'Just Conversation'),
@@ -126,16 +127,25 @@ class UserSettings(models.Model):
 
     def __str__(self):
         return f"Settings for {self.user.email}"
+    
+    def get_peppered_passcode(self, raw_passcode):
+        pepper = settings.SECRET_KEY[:20] 
+        return hashlib.sha256(f"{pepper}{raw_passcode}".encode()).hexdigest()
 
     def set_passcode(self, raw_passcode):
         if not raw_passcode or len(raw_passcode) != 4 or not raw_passcode.isdigit():
             raise ValueError("Passcode must be exactly 4 digits")
-        self.passcode = make_password(raw_passcode)
+        peppered_passcode = self.get_peppered_passcode(raw_passcode)
+        self.passcode = make_password(peppered_passcode)
         self.save(update_fields=['passcode'])
 
     def check_passcode(self, raw_passcode):
         if not self.passcode:
             return False
+            
+        peppered_passcode = self.get_peppered_passcode(raw_passcode)
+        if check_password(peppered_passcode, self.passcode):
+            return True
         return check_password(raw_passcode, self.passcode)
     
     def save(self, *args, **kwargs):
@@ -166,12 +176,12 @@ class TargetProfile(models.Model):
     class Meta:
         verbose_name = "Target Profile"
         verbose_name_plural = "Target Profiles"
-        ordering = ['-created_at']
+        ordering =['-created_at']
         indexes = [
             models.Index(fields=['user', '-created_at']),
             models.Index(fields=['user', 'name']),
         ]
-        constraints = [
+        constraints =[
             models.UniqueConstraint(
                 fields=['user', 'name'],
                 name='unique_user_target_name'
@@ -183,9 +193,9 @@ class TargetProfile(models.Model):
     
     def clean(self):
         if not isinstance(self.preferences, list):
-            self.preferences = []
+            self.preferences =[]
         if not isinstance(self.what_she_likes, list):
-            self.what_she_likes = []
+            self.what_she_likes =[]
 
 class FCMDevice(models.Model):
     user = models.ForeignKey(

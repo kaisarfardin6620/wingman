@@ -126,7 +126,13 @@ class ChatConsumer(AsyncWebsocketConsumer):
         self.session_db_id = session.id
         lock_key = f"ai_processing_lock:{session.id}:{self.user.id}"
         
-        if not await self.acquire_lock(lock_key, 60):
+        has_processing = await database_sync_to_async(
+            lambda: Message.objects.filter(session_id=session.id, processing_status='processing').exists()
+        )()
+        if not has_processing:
+            await database_sync_to_async(cache.delete)(lock_key)
+
+        if not await self.acquire_lock(lock_key, 35):
             await self.send(text_data=json.dumps({
                 'type': 'error',
                 'code': 'ai_busy', 

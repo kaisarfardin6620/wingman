@@ -1,6 +1,8 @@
 import json
 import base64
 import logging
+import io
+from PIL import Image
 from celery import shared_task
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
@@ -49,21 +51,24 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None, select
     try:
         session = ChatSession.objects.select_related('user', 'target_profile').get(id=session_id)
         
-        with transaction.atomic():
-            ai_msg = Message.objects.create(
-                session=session, 
-                is_ai=True, 
-                text="", 
-                processing_status='processing'
-            )
+        ai_msg = Message.objects.filter(session=session, is_ai=True, processing_status='processing').last()
         
-        send_ws_message(session.conversation_id, {
-            'id': ai_msg.id, 
-            'text': "", 
-            'is_ai': True, 
-            'status': 'processing',
-            'created_at': str(ai_msg.created_at)
-        })
+        if not ai_msg:
+            with transaction.atomic():
+                ai_msg = Message.objects.create(
+                    session=session, 
+                    is_ai=True, 
+                    text="", 
+                    processing_status='processing'
+                )
+            
+            send_ws_message(session.conversation_id, {
+                'id': ai_msg.id, 
+                'text': "", 
+                'is_ai': True, 
+                'status': 'processing',
+                'created_at': str(ai_msg.created_at)
+            })
 
         system_prompt = AIService.build_system_prompt(session.user, session, selected_tone, selected_length)
         messages_payload = AIService.prepare_context(session, system_prompt)
@@ -188,12 +193,21 @@ def analyze_screenshot_task(self, message_id):
         for img_obj in message.images.all():
             try:
                 with img_obj.image.open('rb') as image_file:
-                    base64_image = base64.b64encode(image_file.read()).decode('utf-8')
-                    content.append({
-                        "type": "image_url", 
-                        "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
-                    })
-                    valid_images += 1
+                    with Image.open(image_file) as img:
+                        if img.mode != 'RGB':
+                            img = img.convert('RGB')
+                        
+                        img.thumbnail((1024, 1024))
+                        
+                        buffer = io.BytesIO()
+                        img.save(buffer, format="JPEG", quality=85)
+                        base64_image = base64.b64encode(buffer.getvalue()).decode('utf-8')
+                        
+                        content.append({
+                            "type": "image_url", 
+                            "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
+                        })
+                        valid_images += 1
             except Exception as e: 
                 logger.error(f"Failed to read image {img_obj.id} for message {message_id}: {e}")
 
