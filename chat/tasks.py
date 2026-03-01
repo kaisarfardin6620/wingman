@@ -44,7 +44,7 @@ def send_ws_message(session_id, data):
     autoretry_for=(RateLimitError, APIConnectionError, InternalServerError),
     retry_backoff=True
 )
-def generate_ai_response(self, session_id, user_text, selected_tone=None, selected_length=None):
+def generate_ai_response(self, session_id, user_text, selected_tone=None, selected_length=None, analyze_screenshot=False):
     client = OpenAI(api_key=settings.OPENAI_API_KEY)
     ai_msg = None
     
@@ -72,6 +72,12 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None, select
 
         system_prompt = AIService.build_system_prompt(session.user, session, selected_tone, selected_length)
         messages_payload = AIService.prepare_context(session, system_prompt)
+
+        if analyze_screenshot:
+            messages_payload.append({
+                "role": "user",
+                "content": "Please analyze the screenshot text. Break down the interaction, provide an analytics perspective of the conversation/intent, and give me the best wingman advice and 3 reply suggestions."
+            })
 
         if selected_length:
             sl = selected_length.lower()
@@ -242,8 +248,31 @@ def analyze_screenshot_task(self, message_id):
             'status': 'completed'
         })
 
-        if message.text and message.text != "[Screenshot Uploaded]":
-            generate_ai_response.delay(message.session.id, message.text)
+        ocr_display_text = json.dumps({
+            "response_type": "text", 
+            "content": f"📝 **Extracted Text from Screenshot:**\n\n{ocr_text}"
+        })
+        
+        ocr_msg = Message.objects.create(
+            session=message.session,
+            is_ai=True,
+            text=ocr_display_text,
+            processing_status='completed'
+        )
+        
+        send_ws_message(message.session.conversation_id, {
+            'id': ocr_msg.id, 
+            'text': ocr_msg.text, 
+            'is_ai': True, 
+            'status': 'completed',
+            'created_at': str(ocr_msg.created_at)
+        })
+
+        generate_ai_response.delay(
+            message.session.id, 
+            message.text or "[Screenshot Uploaded]", 
+            analyze_screenshot=True
+        )
         
     except Exception as e: 
         logger.error(f"OCR Error for message {message_id}: {e}")
