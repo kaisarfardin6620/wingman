@@ -261,7 +261,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         )
         session.update_preview()
         User.objects.filter(pk=self.user.pk).update(msg_count=models.F('msg_count') + 1)
-        new_count = User.objects.filter(pk=self.user.pk).values_list('msg_count', flat=True).first() or 0
+        new_count = User.objects.filter(pk=self.user.pk).values_list('msg_count', flat=True).first() or 1
 
         transaction.on_commit(lambda: generate_ai_response.delay(session.id, text, selected_tone, selected_length))
         
