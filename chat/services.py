@@ -88,8 +88,9 @@ class AIService:
             f"{uncensored_instruction}\n"
             "You are a helpful Wingman AI dating coach.\n"
             "IMPORTANT: You must return a valid JSON object. Do not include markdown code block syntax (like ```json).\n"
+            "Ensure your text content is perfectly clean, without any unicode hallucination artifacts or citation markers (like 𐄁4a1).\n"
             "Structure: { 'response_type': 'text' | 'suggestions', 'content': string | array of strings }\n"
-            "If returning suggestions, 'content' MUST be a list of exactly 3 distinct, high-quality strings based on the user's tone and style: ['Option 1', 'Option 2', 'Option 3']\n"
+            "If returning suggestions, 'content' MUST be a list of exactly 3 distinct, high-quality strings based on the user's tone and style:['Option 1', 'Option 2', 'Option 3']\n"
         )
         return system_prompt
 

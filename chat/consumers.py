@@ -53,8 +53,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     async def disconnect(self, close_code):
         if hasattr(self, 'session_db_id') and self.session_db_id and hasattr(self, 'user'):
-            lock_key = f"ai_processing_lock:{self.session_db_id}:{self.user.id}"
-            await database_sync_to_async(cache.delete)(lock_key)
+            has_processing = await database_sync_to_async(
+                lambda: Message.objects.filter(session_id=self.session_db_id, processing_status='processing').exists()
+            )()
+            if not has_processing:
+                lock_key = f"ai_processing_lock:{self.session_db_id}:{self.user.id}"
+                await database_sync_to_async(cache.delete)(lock_key)
             
         if self.room_group_name:
             await self.channel_layer.group_discard(self.room_group_name, self.channel_name)

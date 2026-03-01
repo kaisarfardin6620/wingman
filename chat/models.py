@@ -35,7 +35,7 @@ class ChatSession(models.Model):
         verbose_name = "Chat Session"
         verbose_name_plural = "Chat Sessions"
         ordering = ['-updated_at']
-        indexes = [
+        indexes =[
             models.Index(fields=['user', '-updated_at']),
             models.Index(fields=['conversation_id']),
             models.Index(fields=['-created_at']),
@@ -71,9 +71,7 @@ class ChatSession(models.Model):
             ChatSession.objects.filter(pk=self.pk).update(
                 last_message_preview=self.last_message_preview,
                 updated_at=self.updated_at,
-                message_count=models.Subquery(
-                    Message.objects.filter(session_id=self.pk).values('session_id').annotate(count=models.Count('id')).values('count')
-                )
+                message_count=self.messages.count()
             )
 
 class Message(models.Model):
@@ -162,7 +160,7 @@ class DetectedEvent(models.Model):
         verbose_name = "Detected Event"
         verbose_name_plural = "Detected Events"
         ordering = ['-created_at']
-        indexes = [
+        indexes =[
             models.Index(fields=['session', '-created_at']),
             models.Index(fields=['reminder_datetime', 'reminder_sent']),
         ]

@@ -47,6 +47,7 @@ def send_ws_message(session_id, data):
 def generate_ai_response(self, session_id, user_text, selected_tone=None, selected_length=None, analyze_screenshot=False):
     client = OpenAI(api_key=settings.OPENAI_API_KEY)
     ai_msg = None
+    session = None
     
     try:
         session = ChatSession.objects.select_related('user', 'target_profile').get(id=session_id)
@@ -76,7 +77,7 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None, select
         if analyze_screenshot:
             messages_payload.append({
                 "role": "user",
-                "content": "Please analyze the screenshot text. Break down the interaction, provide an analytics perspective of the conversation/intent, and give me the best wingman advice and 3 reply suggestions."
+                "content": "Please analyze the screenshot text. Break down the interaction, provide an analytics perspective of the conversation/intent, give me the best wingman advice, and provide 3 reply suggestions. DO NOT output weird unicode citation characters (like 𐄁4a1)."
             })
 
         if selected_length:
@@ -167,14 +168,14 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None, select
         
     except Exception as e:
         logger.error(f"AI System Error: {e}", exc_info=True)
-        if ai_msg and 'session' in locals():
+        if ai_msg and session:
             ai_msg.processing_status = 'failed'
             ai_msg.text = json.dumps({"response_type": "text", "content": "System Error."})
             ai_msg.save()
             send_ws_message(session.conversation_id, {'id': ai_msg.id, 'status': 'failed', 'text': ai_msg.text})
 
     finally:
-        if 'session' in locals() and session:
+        if session and hasattr(session, 'id') and hasattr(session, 'user'):
             cache.delete(f"ai_processing_lock:{session.id}:{session.user.id}")
 
 @shared_task(bind=True, max_retries=2, autoretry_for=(OpenAIError,))
@@ -248,26 +249,7 @@ def analyze_screenshot_task(self, message_id):
             'status': 'completed'
         })
 
-        ocr_display_text = json.dumps({
-            "response_type": "text", 
-            "content": f"📝 **Extracted Text from Screenshot:**\n\n{ocr_text}"
-        })
-        
-        ocr_msg = Message.objects.create(
-            session=message.session,
-            is_ai=True,
-            text=ocr_display_text,
-            processing_status='completed'
-        )
-        
-        send_ws_message(message.session.conversation_id, {
-            'id': ocr_msg.id, 
-            'text': ocr_msg.text, 
-            'is_ai': True, 
-            'status': 'completed',
-            'created_at': str(ocr_msg.created_at)
-        })
-
+            
         generate_ai_response.delay(
             message.session.id, 
             message.text or "[Screenshot Uploaded]", 

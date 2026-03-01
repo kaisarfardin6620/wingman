@@ -1,4 +1,3 @@
-from requests import session
 import structlog
 from rest_framework import viewsets, mixins, parsers, status, filters
 from rest_framework.views import APIView
@@ -141,7 +140,7 @@ class ChatSessionViewSet(viewsets.GenericViewSet,
 
 class ChatSessionImageUploadView(APIView):
     permission_classes = [IsAuthenticated]
-    parser_classes = [parsers.MultiPartParser, parsers.FormParser]
+    parser_classes =[parsers.MultiPartParser, parsers.FormParser]
     throttle_classes = [UploadThrottle]
 
     @extend_schema(
