@@ -8,6 +8,8 @@ from rest_framework.response import Response
 from rest_framework.throttling import UserRateThrottle
 from django.core.cache import cache
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
+from datetime import timedelta
 from drf_spectacular.utils import extend_schema
 
 from .models import ChatSession
@@ -43,14 +45,25 @@ class ChatSessionViewSet(viewsets.GenericViewSet,
     def get_queryset(self):
         if getattr(self, 'swagger_fake_view', False):
             return ChatSession.objects.none()
-            
-        return ChatSession.objects.filter(
+
+        qs = ChatSession.objects.filter(
             user=self.request.user
         ).select_related(
             'target_profile'
         ).prefetch_related(
             'events'
         ).order_by('-updated_at')
+
+        date_filter = self.request.query_params.get('filter')
+        now = timezone.now()
+        if date_filter == 'today':
+            qs = qs.filter(updated_at__date=now.date())
+        elif date_filter == 'last_week':
+            qs = qs.filter(updated_at__gte=now - timedelta(days=7))
+        elif date_filter == 'last_month':
+            qs = qs.filter(updated_at__gte=now - timedelta(days=30))
+
+        return qs
     
     def get_object(self):
         conversation_id = self.kwargs.get('conversation_id')

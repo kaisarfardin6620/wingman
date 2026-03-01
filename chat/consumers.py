@@ -8,7 +8,7 @@ from django.core.cache import cache
 from django.db import transaction, models
 from core.models import TargetProfile, GlobalConfig
 from .models import ChatSession, Message
-from .tasks import generate_ai_response, generate_chat_title
+from .tasks import generate_ai_response, generate_chat_title, linguistic_engine
 from wingman.constants import CACHE_TTL_CHAT_SESSION, CACHE_TTL_CHAT_HISTORY, CACHE_TTL_GLOBAL_CONFIG
 
 User = get_user_model()
@@ -261,11 +261,15 @@ class ChatConsumer(AsyncWebsocketConsumer):
         )
         session.update_preview()
         User.objects.filter(pk=self.user.pk).update(msg_count=models.F('msg_count') + 1)
-        
+        new_count = User.objects.filter(pk=self.user.pk).values_list('msg_count', flat=True).first() or 0
+
         transaction.on_commit(lambda: generate_ai_response.delay(session.id, text, selected_tone, selected_length))
         
         if created:
             transaction.on_commit(lambda: generate_chat_title.delay(session.id, text))
+
+        if new_count % 5 == 0:
+            transaction.on_commit(lambda: linguistic_engine.delay(self.user.id, session.id))
             
         return message
 
