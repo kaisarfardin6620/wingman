@@ -82,9 +82,14 @@ class AIService:
 
         user_name_prompt = f"The user you are helping is named {user.name or 'User'}."    
 
+        goal_prompt = ""
+        if user_settings.goal:
+            goal_prompt = f"USER GOAL: The user is looking for '{user_settings.goal}'. Tailor all advice and replies to help achieve this specific outcome."
+
         system_prompt = (
             f"{user_name_prompt}\n"
             f"{persona_prompt}\n{user_style_prompt}\n{tone_prompt}\n{length_prompt}\n{lang_instruction}\n{target_prompt}\n"
+            f"{goal_prompt}\n"
             f"{uncensored_instruction}\n"
             "You are a helpful Wingman AI dating coach.\n"
             "IMPORTANT: You must return a valid JSON object. Do not include markdown code block syntax (like ```json).\n"
