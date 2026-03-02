@@ -70,23 +70,19 @@ class RegisterView(APIView):
 
 class VerifyOTPView(APIView):
     throttle_classes = [OTPRateThrottle]
-    permission_classes = [AllowAny]
+    permission_classes =[AllowAny]
 
-    @extend_schema(
-        request=VerifyOTPSerializer,
-        responses={200: dict},
-        summary="Verify Account OTP"
-    )
+    @extend_schema(request=VerifyOTPSerializer, responses={200: dict}, summary="Verify Account OTP")
     def post(self, request):
         serializer = VerifyOTPSerializer(data=request.data)
         if serializer.is_valid():
-            success, message = AuthService.verify_otp(
+            success, data_or_message = AuthService.verify_otp(
                 serializer.validated_data['email'], 
                 serializer.validated_data['otp']
             )
             if success:
-                return Response({"message": message}, status=status.HTTP_200_OK)
-            return Response({"error": message}, status=status.HTTP_400_BAD_REQUEST)
+                return Response(data_or_message, status=status.HTTP_200_OK)
+            return Response({"error": data_or_message}, status=status.HTTP_400_BAD_REQUEST)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class LoginView(APIView):

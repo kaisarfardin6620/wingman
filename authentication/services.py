@@ -43,7 +43,14 @@ class AuthService:
                     user.is_active = True
                     user.save(update_fields=['is_active'])
                     logger.info("user_activated", email=email)
-                return True, "Verification successful"
+                
+                tokens = user.tokens
+                return True, {
+                    "message": "Verification successful. Logged in.",
+                    "access": tokens['access'],
+                    "refresh": tokens['refresh'],
+                    "user_id": user.id
+                }
             except User.DoesNotExist:
                 return False, "User not found"
         return False, message
