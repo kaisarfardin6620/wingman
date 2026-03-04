@@ -61,6 +61,8 @@ class ChatSessionViewSet(viewsets.GenericViewSet,
             qs = qs.filter(updated_at__gte=now - timedelta(days=7))
         elif date_filter == 'last_month':
             qs = qs.filter(updated_at__gte=now - timedelta(days=30))
+        elif date_filter: 
+            return ChatSession.objects.none()
 
         return qs
     
