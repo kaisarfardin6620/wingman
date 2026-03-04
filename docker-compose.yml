@@ -98,7 +98,7 @@ services:
         condition: service_healthy
       pgbouncer:
         condition: service_healthy
-    command: celery -A wingman worker --pool=gevent --concurrency=20 -Q default -n worker_ai@%h --loglevel=info
+    command: celery -A wingman worker --pool=threads --concurrency=20 -Q default -n worker_ai@%h --loglevel=info
     healthcheck:
       test: ["CMD", "celery", "-A", "wingman", "inspect", "ping", "-d", "worker_ai@$$HOSTNAME"]
       interval: 30s

@@ -16,6 +16,7 @@ from core.models import UserSettings, TargetProfile
 from core.utils import send_push_notification
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+import os
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -284,7 +285,7 @@ def transcribe_audio_task(self, message_id):
         with message.audio.open('rb') as audio_file:
             transcript = client.audio.transcriptions.create(
                 model="whisper-1", 
-                file=audio_file,
+                file=(os.path.basename(message.audio.name), audio_file.read()),
                 response_format="text"
             )
         

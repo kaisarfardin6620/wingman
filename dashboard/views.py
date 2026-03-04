@@ -40,7 +40,7 @@ class DashboardAnalyticsView(APIView):
         cached = cache.get(cache_key)
         if cached: return Response(cached)
         
-        data = DashboardService.get_analytics(request)
+        data = DashboardService.get_analytics()
         serializer = DashboardStatsSerializer(data)
         cache.set(cache_key, serializer.data, 60)
         return Response(serializer.data)

@@ -11,7 +11,7 @@ logger = structlog.get_logger(__name__)
 
 class DashboardService:
     @staticmethod
-    def get_analytics(request=None):
+    def get_analytics():
         user_stats = User.objects.aggregate(
             total=Count('id'),
             premium=Count('id', filter=Q(is_premium=True)),
@@ -31,17 +31,15 @@ class DashboardService:
             .annotate(count=Count('id'))
             .order_by('month')
         )
-        graph_data = [{"month": e['month'].strftime('%b %Y'), "count": e['count']} for e in monthly_data if e['month']]
+        graph_data =[{"month": e['month'].strftime('%b %Y'), "count": e['count']} for e in monthly_data if e['month']]
 
         recent_users_qs = User.objects.all().order_by('-date_joined')[:5]
         
-        recent_users = []
+        recent_users =[]
         for user in recent_users_qs:
             profile_image_url = None
             if user.profile_image and hasattr(user.profile_image, 'url'):
                 profile_image_url = user.profile_image.url
-                if request:
-                    profile_image_url = request.build_absolute_uri(profile_image_url)
 
             user_data = {
                 "id": user.id,
