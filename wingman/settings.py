@@ -28,14 +28,13 @@ ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")
 SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = 'DENY'
-
 SECURE_SSL_REDIRECT = not DEBUG
+SECURE_REDIRECT_EXEMPT = [r'^health/$', r'^metrics/$']  # Internal endpoints exempt from HTTPS redirect
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 SECURE_HSTS_SECONDS = 31536000 if not DEBUG else 0
 SECURE_HSTS_INCLUDE_SUBDOMAINS = not DEBUG
 SECURE_HSTS_PRELOAD = not DEBUG
-
 SESSION_COOKIE_HTTPONLY = True
 CSRF_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = 'Lax'
@@ -48,7 +47,6 @@ OPENAI_MODEL_MINI = os.getenv('OPENAI_MODEL_MINI', 'gpt-4o-mini')
 SERVER_BASE_URL = os.getenv('SERVER_BASE_URL', 'http://127.0.0.1:8000')
 
 INSTALLED_APPS = [
-    'daphne',
     'channels',
     'django.contrib.admin',
     'django.contrib.auth',
@@ -64,6 +62,7 @@ INSTALLED_APPS = [
     'drf_spectacular',
     'db_file_storage',
     'django_celery_results',
+    'django_celery_beat',
     'allauth',
     'allauth.account',
     'allauth.socialaccount',
@@ -124,13 +123,12 @@ if DATABASE_URL:
     DATABASES = {
         'default': dj_database_url.parse(DATABASE_URL)
     }
-    DATABASES['default']['CONN_MAX_AGE'] = 60
-    DATABASES['default']['CONN_HEALTH_CHECKS'] = True
-    
+    DATABASES['default']['CONN_MAX_AGE'] = int(os.getenv('DB_CONN_MAX_AGE', 0))
+    DATABASES['default']['CONN_HEALTH_CHECKS'] = False  
     DATABASES['default']['OPTIONS'] = {
         'connect_timeout': 10,
     }
-    
+
     if 'postgres' in DATABASE_URL or 'postgresql' in DATABASE_URL:
         DATABASES['default']['OPTIONS']['options'] = '-c statement_timeout=30000'
 else:
@@ -167,14 +165,15 @@ SOCIALACCOUNT_EMAIL_REQUIRED = os.getenv('SOCIALACCOUNT_EMAIL_REQUIRED', 'True')
 SOCIALACCOUNT_QUERY_EMAIL = os.getenv('SOCIALACCOUNT_QUERY_EMAIL', 'True').strip().lower() == 'true'
 SOCIALACCOUNT_STORE_TOKENS = os.getenv('SOCIALACCOUNT_STORE_TOKENS', 'False').strip().lower() == 'true'
 
+_DEFAULT_RENDERER_CLASSES = ['authentication.renderers.CustomJSONRenderer']
+if DEBUG:
+    _DEFAULT_RENDERER_CLASSES.append('rest_framework.renderers.BrowsableAPIRenderer')
+
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
-    'DEFAULT_RENDERER_CLASSES': (
-        'authentication.renderers.CustomJSONRenderer',
-        'rest_framework.renderers.BrowsableAPIRenderer',
-    ),
+    'DEFAULT_RENDERER_CLASSES': _DEFAULT_RENDERER_CLASSES,
     'DEFAULT_THROTTLE_CLASSES': [
         'rest_framework.throttling.AnonRateThrottle',
         'rest_framework.throttling.UserRateThrottle',
@@ -197,7 +196,7 @@ SPECTACULAR_SETTINGS = {
     'DESCRIPTION': 'Production Grade API for Wingman AI',
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
-    'COMPONENT_SPLIT_REQUEST': True, 
+    'COMPONENT_SPLIT_REQUEST': True,
     'COMPONENT_NO_READ_ONLY_REQUIRED': True,
     'SWAGGER_UI_SETTINGS': {
         'deepLinking': True,
@@ -234,23 +233,28 @@ SIMPLE_JWT = {
 }
 
 if RUNNING_IN_DOCKER:
-    REDIS_LOCATION = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
+    _redis_url = os.environ.get('REDIS_URL', 'redis://redis:6379')
+    REDIS_BASE = _redis_url.rsplit('/', 1)[0] if _redis_url.count('/') >= 3 else _redis_url
 else:
-    REDIS_LOCATION = 'redis://127.0.0.1:6379/0'
+    REDIS_BASE = 'redis://127.0.0.1:6379'
+
+REDIS_CACHE_URL     = f'{REDIS_BASE}/0'
+REDIS_CELERY_URL    = f'{REDIS_BASE}/1' 
+REDIS_CHANNELS_URL  = f'{REDIS_BASE}/2'
 
 CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [REDIS_LOCATION],
+            "hosts": [REDIS_CHANNELS_URL],
             "capacity": int(os.getenv('CHANNEL_CAPACITY', 1000)),
             "expiry": int(os.getenv('CHANNEL_EXPIRY', 60)),
         },
     },
 }
 
-CELERY_BROKER_URL = REDIS_LOCATION
-CELERY_RESULT_BACKEND = REDIS_LOCATION
+CELERY_BROKER_URL = REDIS_CELERY_URL
+CELERY_RESULT_BACKEND = REDIS_CELERY_URL
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
@@ -275,7 +279,7 @@ CELERY_TASK_ROUTES = {
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": REDIS_LOCATION,
+        "LOCATION": REDIS_CACHE_URL,
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
             "CONNECTION_POOL_KWARGS": {
@@ -321,9 +325,7 @@ LANGUAGES = [
     ('hi', _('Hindi')),
 ]
 
-LOCALE_PATHS = [
-    BASE_DIR / 'locale',
-]
+LOCALE_PATHS = [BASE_DIR / 'locale']
 
 FILE_UPLOAD_MAX_MEMORY_SIZE = int(os.getenv('MAX_UPLOAD_SIZE', 5242880))
 DATA_UPLOAD_MAX_MEMORY_SIZE = int(os.getenv('MAX_UPLOAD_SIZE', 5242880))
@@ -344,14 +346,7 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
 ]
 
 CORS_ALLOW_CREDENTIALS = True
-CORS_ALLOW_METHODS = [
-    'DELETE',
-    'GET',
-    'OPTIONS',
-    'PATCH',
-    'POST',
-    'PUT',
-]
+CORS_ALLOW_METHODS = ['DELETE', 'GET', 'OPTIONS', 'PATCH', 'POST', 'PUT']
 
 csrf_origins = os.getenv("CSRF_TRUSTED_ORIGINS", "http://127.0.0.1,http://localhost")
 CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in csrf_origins.split(",") if origin.strip()]
@@ -397,6 +392,11 @@ LOGGING = {
             "level": os.getenv('DJANGO_LOG_LEVEL', 'INFO'),
             "propagate": True,
         },
+        "django.db.backends": {
+            "handlers": ["console", "file"],
+            "level": os.getenv('DB_LOG_LEVEL', 'WARNING'),
+            "propagate": False,
+        },
         "authentication": {"handlers": ["console", "file"], "level": "INFO", "propagate": False},
         "chat": {"handlers": ["console", "file"], "level": "INFO", "propagate": False},
         "core": {"handlers": ["console", "file"], "level": "INFO", "propagate": False},
@@ -431,32 +431,25 @@ if USE_AWS:
     AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
     AWS_STORAGE_BUCKET_NAME = os.getenv('AWS_STORAGE_BUCKET_NAME')
     AWS_S3_REGION_NAME = os.getenv('AWS_S3_REGION_NAME')
-    
+
     if AWS_S3_REGION_NAME == 'us-east-1':
         AWS_S3_CUSTOM_DOMAIN = f'{AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com'
     else:
         AWS_S3_CUSTOM_DOMAIN = f'{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com'
-        
-    AWS_S3_OBJECT_PARAMETERS = {
-        'CacheControl': 'max-age=14400',
-    }
+
+    AWS_S3_OBJECT_PARAMETERS = {'CacheControl': 'max-age=14400'}
 
     STORAGES = {
         "default": {
             "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
-            "OPTIONS": {
-                "location": "media",
-                "file_overwrite": False,
-            },
+            "OPTIONS": {"location": "media", "file_overwrite": False},
         },
         "staticfiles": {
             "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
-            "OPTIONS": {
-                "location": "static",
-            },
+            "OPTIONS": {"location": "static"},
         },
     }
-    
+
     STATIC_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/static/'
     MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/media/'
 
@@ -465,12 +458,8 @@ else:
     STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
     MEDIA_URL = '/media/'
     MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
-    
+
     STORAGES = {
-        "default": {
-            "BACKEND": "django.core.files.storage.FileSystemStorage",
-        },
-        "staticfiles": {
-            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
-        },
+        "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+        "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
     }

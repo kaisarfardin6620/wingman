@@ -8,9 +8,15 @@ services:
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf
       - static_volume:/app/staticfiles
-      - ./media:/app/media 
+      - ./media:/app/media
     depends_on:
-      - web
+      web:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: '0.5'
 
   web:
     build: .
@@ -23,12 +29,55 @@ services:
       - DJANGO_ALLOW_ASYNC_UNSAFE=true
     volumes:
       - static_volume:/app/staticfiles
-      - ./media:/app/media 
+      - ./media:/app/media
       - ./logs:/app/logs
       - ./dbs:/app/dbs
       - ./serviceaccountkey.json:/app/serviceaccountkey.json
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request, sys; r=urllib.request.urlopen('http://localhost:8000/health/'); sys.exit(0 if r.status == 200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: '1.0'
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: wingman_pgbouncer
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=${PGBOUNCER_DATABASE_URL}
+      - IGNORE_STARTUP_PARAMETERS=${PGBOUNCER_IGNORE_STARTUP_PARAMETERS}
+      - AUTH_TYPE=${PGBOUNCER_AUTH_TYPE}
+      - POOL_MODE=${PGBOUNCER_POOL_MODE}
+      - MAX_CLIENT_CONN=${PGBOUNCER_MAX_CLIENT_CONN}
+      - DEFAULT_POOL_SIZE=${PGBOUNCER_DEFAULT_POOL_SIZE}
+      - MIN_POOL_SIZE=${PGBOUNCER_MIN_POOL_SIZE}
+      - RESERVE_POOL_SIZE=${PGBOUNCER_RESERVE_POOL_SIZE}
+      - SERVER_IDLE_TIMEOUT=${PGBOUNCER_SERVER_IDLE_TIMEOUT}
+      - LOG_CONNECTIONS=${PGBOUNCER_LOG_CONNECTIONS}
+      - LOG_DISCONNECTIONS=${PGBOUNCER_LOG_DISCONNECTIONS}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: '0.25'
 
   celery_ai:
     build: .
@@ -45,9 +94,22 @@ services:
       - ./dbs:/app/dbs
       - ./serviceaccountkey.json:/app/serviceaccountkey.json
     depends_on:
-      - redis
-      - web
-    command: celery -A wingman worker --pool=gevent --concurrency=100 -Q default -n worker_ai@%h --loglevel=info
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    command: celery -A wingman worker --pool=gevent --concurrency=20 -Q default -n worker_ai@%h --loglevel=info
+    healthcheck:
+      test: ["CMD", "celery", "-A", "wingman", "inspect", "ping", "-d", "worker_ai@$$HOSTNAME"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: '0.75'
 
   celery_heavy:
     build: .
@@ -64,11 +126,24 @@ services:
       - ./dbs:/app/dbs
       - ./serviceaccountkey.json:/app/serviceaccountkey.json
     depends_on:
-      - redis
-      - web
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
     command: celery -A wingman worker --pool=prefork --concurrency=2 -Q heavy_queue -n worker_heavy@%h --loglevel=info
+    healthcheck:
+      test: ["CMD", "celery", "-A", "wingman", "inspect", "ping", "-d", "worker_heavy@$$HOSTNAME"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: '0.75'
 
-  celery-beat:
+  celery_beat:
     build: .
     container_name: wingman_beat
     restart: unless-stopped
@@ -83,16 +158,34 @@ services:
       - ./dbs:/app/dbs
       - ./serviceaccountkey.json:/app/serviceaccountkey.json
     depends_on:
-      - redis
-      - web
-    command: celery -A wingman beat --loglevel=info
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    command: celery -A wingman beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: '0.25'
 
   redis:
     image: redis:7-alpine
     container_name: wingman_redis
     restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --save 60 1 --loglevel warning
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 320m
+          cpus: '0.5'
 
 volumes:
   static_volume:
