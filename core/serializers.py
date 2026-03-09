@@ -6,7 +6,7 @@ from .models import Notification
 class ToneSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tone
-        fields = ['id', 'name', 'description']
+        fields =['id', 'name', 'description']
 
 class PersonaSerializer(serializers.ModelSerializer):
     class Meta:
@@ -26,7 +26,7 @@ class UserSettingsSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = UserSettings
-        fields = [
+        fields =[
             'language', 'gold_theme', 'premium_logo', 
             'passcode_lock_enabled', 'passcode',
             'hide_notifications',
@@ -50,10 +50,22 @@ class UserSettingsSerializer(serializers.ModelSerializer):
             validated_data['passcode'] = make_password(validated_data['passcode'])
         return super().update(instance, validated_data)
 
+
 class TargetProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = TargetProfile
-        fields = ['id', 'name', 'birthday', 'preferences', 'what_she_likes', 'details', 'her_mentions', 'avatar', 'created_at']
+        fields =['id', 'name', 'birthday', 'preferences', 'what_she_likes', 'details', 'her_mentions', 'avatar', 'created_at']
+
+    def validate_name(self, value):
+        request = self.context.get('request')
+        if request and request.user:
+            query = TargetProfile.objects.filter(user=request.user, name__iexact=value)
+            if self.instance:
+                query = query.exclude(pk=self.instance.pk)
+            if query.exists():
+                raise serializers.ValidationError("A profile with this name already exists.")
+        return value
+
 
 class PasscodeVerifySerializer(serializers.Serializer):
     passcode = serializers.CharField(max_length=4)

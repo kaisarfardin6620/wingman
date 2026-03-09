@@ -222,7 +222,7 @@ class UserProfileView(APIView):
 
 class GoogleLoginView(APIView):
     permission_classes = [AllowAny]
-    throttle_classes = [DeviceRateThrottle]
+    throttle_classes =[DeviceRateThrottle]
 
     @extend_schema(
         request={"application/json": {"type": "object", "properties": {"id_token": {"type": "string"}}}},
@@ -290,6 +290,7 @@ class GoogleLoginView(APIView):
 
             return Response({
                 "message": "Login successful",
+                "is_new_user": created,
                 "access": tokens['access'],
                 "refresh": tokens['refresh'],
                 "user": UserProfileSerializer(user, context={"request": request}).data
@@ -361,7 +362,7 @@ class AppleLoginView(APIView):
 
         try:
             with transaction.atomic():
-                user = self._get_or_create_user(apple_user_id, email)
+                user, created = self._get_or_create_user(apple_user_id, email)
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception:
@@ -383,6 +384,7 @@ class AppleLoginView(APIView):
 
         return Response({
             "message": "Login successful",
+            "is_new_user": created,
             "access": tokens['access'],
             "refresh": tokens['refresh'],
             "user": UserProfileSerializer(user, context={"request": request}).data
@@ -420,7 +422,7 @@ class AppleLoginView(APIView):
     def _get_or_create_user(self, apple_user_id: str, email: str | None):
         user = User.objects.filter(social_id=apple_user_id).first()
         if user:
-            return user
+            return user, False
 
         if not email:
             raise ValueError("Email is required on first Apple login")
@@ -429,13 +431,13 @@ class AppleLoginView(APIView):
         if user:
             user.social_id = apple_user_id
             user.save(update_fields=["social_id"])
-            return user
+            return user, False
 
         return User.objects.create(
             email=email,
             social_id=apple_user_id,
             is_active=True,
-        )
+        ), True
         
 class ChangePasswordView(APIView):
     permission_classes = [IsAuthenticated]
