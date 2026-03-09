@@ -82,6 +82,7 @@ services:
   celery_ai:
     build: .
     container_name: wingman_celery_ai
+    hostname: worker_ai
     restart: unless-stopped
     env_file:
       - .env
@@ -98,9 +99,9 @@ services:
         condition: service_healthy
       pgbouncer:
         condition: service_healthy
-    command: celery -A wingman worker --pool=threads --concurrency=20 -Q default -n worker_ai@%h --loglevel=info
+    command: celery -A wingman worker --pool=threads --concurrency=20 -Q default -n worker_ai@worker_ai --loglevel=info
     healthcheck:
-      test: ["CMD", "celery", "-A", "wingman", "inspect", "ping", "-d", "worker_ai@$$HOSTNAME"]
+      test: ["CMD", "celery", "-A", "wingman", "inspect", "ping", "-d", "worker_ai@worker_ai"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -114,6 +115,7 @@ services:
   celery_heavy:
     build: .
     container_name: wingman_celery_heavy
+    hostname: worker_heavy
     restart: unless-stopped
     env_file:
       - .env
@@ -130,9 +132,9 @@ services:
         condition: service_healthy
       pgbouncer:
         condition: service_healthy
-    command: celery -A wingman worker --pool=prefork --concurrency=2 -Q heavy_queue -n worker_heavy@%h --loglevel=info
+    command: celery -A wingman worker --pool=prefork --concurrency=2 -Q heavy_queue -n worker_heavy@worker_heavy --loglevel=info
     healthcheck:
-      test: ["CMD", "celery", "-A", "wingman", "inspect", "ping", "-d", "worker_heavy@$$HOSTNAME"]
+      test: ["CMD", "celery", "-A", "wingman", "inspect", "ping", "-d", "worker_heavy@worker_heavy"]
       interval: 30s
       timeout: 10s
       retries: 3

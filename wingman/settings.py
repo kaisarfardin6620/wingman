@@ -46,7 +46,7 @@ OPENAI_MODEL_NAME = os.getenv('OPENAI_MODEL_NAME', 'gpt-4o')
 OPENAI_MODEL_MINI = os.getenv('OPENAI_MODEL_MINI', 'gpt-4o-mini')
 SERVER_BASE_URL = os.getenv('SERVER_BASE_URL', 'http://127.0.0.1:8000')
 
-INSTALLED_APPS = [
+INSTALLED_APPS =[
     'channels',
     'django.contrib.admin',
     'django.contrib.auth',
@@ -79,7 +79,7 @@ INSTALLED_APPS = [
 
 SITE_ID = 1
 
-MIDDLEWARE = [
+MIDDLEWARE =[
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
@@ -96,13 +96,13 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = 'wingman.urls'
 
-TEMPLATES = [
+TEMPLATES =[
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
         'DIRS': [BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
-            'context_processors': [
+            'context_processors':[
                 'django.template.context_processors.debug',
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
@@ -131,6 +131,7 @@ if DATABASE_URL:
 
     if 'postgres' in DATABASE_URL or 'postgresql' in DATABASE_URL:
         DATABASES['default']['OPTIONS']['options'] = '-c statement_timeout=30000'
+        DATABASES['default']['OPTIONS']['DISABLE_SERVER_SIDE_CURSORS'] = True
 else:
     if RUNNING_IN_DOCKER:
         db_path = BASE_DIR / 'dbs' / 'db.sqlite3'
@@ -148,12 +149,12 @@ else:
 
 AUTH_USER_MODEL = 'authentication.User'
 
-AUTHENTICATION_BACKENDS = [
+AUTHENTICATION_BACKENDS =[
     'django.contrib.auth.backends.ModelBackend',
     'allauth.account.auth_backends.AuthenticationBackend',
 ]
 
-AUTH_PASSWORD_VALIDATORS = [
+AUTH_PASSWORD_VALIDATORS =[
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
     {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator', 'OPTIONS': {'min_length': 8}},
     {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
@@ -174,7 +175,7 @@ REST_FRAMEWORK = {
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
     'DEFAULT_RENDERER_CLASSES': _DEFAULT_RENDERER_CLASSES,
-    'DEFAULT_THROTTLE_CLASSES': [
+    'DEFAULT_THROTTLE_CLASSES':[
         'rest_framework.throttling.AnonRateThrottle',
         'rest_framework.throttling.UserRateThrottle',
     ],
@@ -312,7 +313,7 @@ USE_I18N = True
 USE_L10N = True
 USE_TZ = True
 
-LANGUAGES = [
+LANGUAGES =[
     ('en', _('English')),
     ('es', _('Spanish')),
     ('pt', _('Portuguese')),
@@ -327,18 +328,18 @@ LANGUAGES = [
 
 LOCALE_PATHS = [BASE_DIR / 'locale']
 
-FILE_UPLOAD_MAX_MEMORY_SIZE = int(os.getenv('MAX_UPLOAD_SIZE', 5242880))
-DATA_UPLOAD_MAX_MEMORY_SIZE = int(os.getenv('MAX_UPLOAD_SIZE', 5242880))
+FILE_UPLOAD_MAX_MEMORY_SIZE = int(os.getenv('MAX_UPLOAD_SIZE', 20971520))
+DATA_UPLOAD_MAX_MEMORY_SIZE = int(os.getenv('MAX_UPLOAD_SIZE', 20971520))
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 CORS_ALLOW_ALL_ORIGINS = False
 cors_origins = os.getenv("CORS_ALLOWED_ORIGINS", "")
-CORS_ALLOWED_ORIGINS = [origin.strip() for origin in cors_origins.split(",") if origin.strip()]
+CORS_ALLOWED_ORIGINS =[origin.strip() for origin in cors_origins.split(",") if origin.strip()]
 if DEBUG and not CORS_ALLOWED_ORIGINS:
-    CORS_ALLOWED_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    CORS_ALLOWED_ORIGINS =["http://localhost:3000", "http://127.0.0.1:3000"]
 
-CORS_ALLOW_HEADERS = list(default_headers) + [
+CORS_ALLOW_HEADERS = list(default_headers) +[
     'authorization',
     'content-disposition',
     'ngrok-skip-browser-warning',
@@ -346,7 +347,7 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
 ]
 
 CORS_ALLOW_CREDENTIALS = True
-CORS_ALLOW_METHODS = ['DELETE', 'GET', 'OPTIONS', 'PATCH', 'POST', 'PUT']
+CORS_ALLOW_METHODS =['DELETE', 'GET', 'OPTIONS', 'PATCH', 'POST', 'PUT']
 
 csrf_origins = os.getenv("CSRF_TRUSTED_ORIGINS", "http://127.0.0.1,http://localhost")
 CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in csrf_origins.split(",") if origin.strip()]
@@ -393,14 +394,14 @@ LOGGING = {
             "propagate": True,
         },
         "django.db.backends": {
-            "handlers": ["console", "file"],
+            "handlers":["console", "file"],
             "level": os.getenv('DB_LOG_LEVEL', 'WARNING'),
             "propagate": False,
         },
         "authentication": {"handlers": ["console", "file"], "level": "INFO", "propagate": False},
         "chat": {"handlers": ["console", "file"], "level": "INFO", "propagate": False},
         "core": {"handlers": ["console", "file"], "level": "INFO", "propagate": False},
-        "dashboard": {"handlers": ["console", "file"], "level": "INFO", "propagate": False},
+        "dashboard": {"handlers":["console", "file"], "level": "INFO", "propagate": False},
     },
 }
 
@@ -412,7 +413,7 @@ ACCOUNT_USERNAME_REQUIRED = False
 ACCOUNT_EMAIL_REQUIRED = True
 ACCOUNT_USER_MODEL_USERNAME_FIELD = None
 
-ADMINS = [
+ADMINS =[
     (os.getenv('ADMIN_NAME', 'Admin'), os.getenv('ADMIN_EMAIL', '')),
 ]
 MANAGERS = ADMINS
