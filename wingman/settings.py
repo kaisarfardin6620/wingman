@@ -131,7 +131,7 @@ if DATABASE_URL:
 
     if 'postgres' in DATABASE_URL or 'postgresql' in DATABASE_URL:
         DATABASES['default']['OPTIONS']['options'] = '-c statement_timeout=30000'
-        DATABASES['default']['OPTIONS']['DISABLE_SERVER_SIDE_CURSORS'] = True
+        DATABASES['default']['DISABLE_SERVER_SIDE_CURSORS'] = True
 else:
     if RUNNING_IN_DOCKER:
         db_path = BASE_DIR / 'dbs' / 'db.sqlite3'

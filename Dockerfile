@@ -32,4 +32,4 @@ EXPOSE 8000
 
 ENTRYPOINT ["/app/entrypoint.sh"]
 
-CMD ["gunicorn", "wingman.asgi:application", "--bind", "0.0.0.0:8000", "-k", "uvicorn.workers.UvicornWorker", "--workers", "3", "--access-logfile", "-", "--error-logfile", "-"]z`
+CMD ["gunicorn", "wingman.asgi:application", "--bind", "0.0.0.0:8000", "-k", "uvicorn.workers.UvicornWorker", "--workers", "3", "--access-logfile", "-", "--error-logfile", "-"]
