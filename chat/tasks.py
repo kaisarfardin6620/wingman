@@ -3,6 +3,7 @@ import base64
 import logging
 import io
 from PIL import Image
+from anyio import current_time
 from celery import shared_task
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
@@ -143,7 +144,7 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None, select
             data={"conversation_id": str(session.conversation_id)}
         )
         
-        if any(word in user_text.lower() for word in['tomorrow', 'tonight', 'meet', 'date', 'clock', 'pm', 'am', 'schedule']):
+        if any(word in user_text.lower() for word in ['tomorrow', 'tonight', 'meet', 'date', 'clock', 'pm', 'am', 'schedule', 'remind', 'talk', 'call', 'meeting', 'reminder']):
             intent_engine.delay(session.id, user_text)
         
         if session.target_profile:
@@ -384,7 +385,13 @@ def intent_engine(self, session_id, user_text):
     client = OpenAI(api_key=settings.OPENAI_API_KEY)
     try:
         session = ChatSession.objects.get(id=session_id)
-        prompt = f"Detect event in: {user_text}. Return JSON: is_event, title, start_time_iso, description, has_conflict."
+        now = timezone.now()
+        prompt = (
+            f"Current Date/Time: {now.isoformat()}\n"
+            f"Detect event in: {user_text}.\n"
+            f"Return JSON: is_event, title, start_time_iso, description, has_conflict.\n"
+            f"CRITICAL: Resolve relative times (like 'tomorrow' or 'in 5 minutes') based on the Current Date/Time and return as absolute ISO 8601 timestamp in 'start_time_iso'."
+        )
         response = client.chat.completions.create(
             model=settings.OPENAI_MODEL_MINI, 
             messages=[{"role": "user", "content": prompt}], 

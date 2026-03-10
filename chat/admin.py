@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import ChatSession, Message, MessageImage
+from .models import ChatSession, Message, MessageImage, DetectedEvent
 
 class MessageImageInline(admin.TabularInline):
     model = MessageImage
@@ -30,3 +30,10 @@ class MessageAdmin(admin.ModelAdmin):
 
     def short_text(self, obj):
         return obj.text[:50] + "..." if obj.text and len(obj.text) > 50 else obj.text
+
+@admin.register(DetectedEvent)
+class DetectedEventAdmin(admin.ModelAdmin):
+    list_display = ('title', 'session', 'reminder_datetime', 'reminder_sent', 'is_confirmed', 'is_cancelled')
+    list_filter = ('reminder_sent', 'is_confirmed', 'is_cancelled', 'created_at')
+    search_fields = ('title', 'description', 'session__user__email')
+    readonly_fields = ('created_at',)
