@@ -69,7 +69,7 @@ class ChatSessionViewSet(viewsets.GenericViewSet,
     def get_object(self):
         conversation_id = self.kwargs.get('conversation_id')
         obj = get_object_or_404(
-            ChatSession,
+            ChatSession.objects.select_related('target_profile').prefetch_related('events'),
             conversation_id=conversation_id,
             user=self.request.user
         )

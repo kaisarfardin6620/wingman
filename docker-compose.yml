@@ -1,7 +1,6 @@
 services:
   nginx:
     image: nginx:1.25-alpine
-    container_name: wingman_nginx
     restart: unless-stopped
     ports:
       - "8000:80"
@@ -20,8 +19,16 @@ services:
 
   web:
     build: .
-    container_name: wingman_web
     restart: unless-stopped
+    deploy:
+      replicas: 3
+      update_config:
+        parallelism: 1
+        order: start-first
+      resources:
+        limits:
+          memory: 1g
+          cpus: '1.0'
     env_file:
       - .env
     environment:
@@ -44,28 +51,28 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-    deploy:
-      resources:
-        limits:
-          memory: 1g
-          cpus: '1.0'
+
 
   pgbouncer:
     image: edoburu/pgbouncer:latest
-    container_name: wingman_pgbouncer
     restart: unless-stopped
     environment:
-      - DATABASE_URL=${PGBOUNCER_DATABASE_URL}
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      - DATABASES=${DB_NAME} = host=${DB_HOST} port=${DB_PORT} auth_user=${DB_USER} password=${DB_PASSWORD}
       - IGNORE_STARTUP_PARAMETERS=${PGBOUNCER_IGNORE_STARTUP_PARAMETERS}
-      - AUTH_TYPE=${PGBOUNCER_AUTH_TYPE}
-      - POOL_MODE=${PGBOUNCER_POOL_MODE}
-      - MAX_CLIENT_CONN=${PGBOUNCER_MAX_CLIENT_CONN}
-      - DEFAULT_POOL_SIZE=${PGBOUNCER_DEFAULT_POOL_SIZE}
-      - MIN_POOL_SIZE=${PGBOUNCER_MIN_POOL_SIZE}
-      - RESERVE_POOL_SIZE=${PGBOUNCER_RESERVE_POOL_SIZE}
-      - SERVER_IDLE_TIMEOUT=${PGBOUNCER_SERVER_IDLE_TIMEOUT}
-      - LOG_CONNECTIONS=${PGBOUNCER_LOG_CONNECTIONS}
-      - LOG_DISCONNECTIONS=${PGBOUNCER_LOG_DISCONNECTIONS}
+      - AUTH_TYPE=plain
+      - POOL_MODE=transaction
+      - MAX_CLIENT_CONN=1000
+      - DEFAULT_POOL_SIZE=30
+      - MIN_POOL_SIZE=5
+      - RESERVE_POOL_SIZE=5
+      - SERVER_IDLE_TIMEOUT=600
+      - LOG_CONNECTIONS=0
+      - LOG_DISCONNECTIONS=0
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -81,9 +88,14 @@ services:
 
   celery_ai:
     build: .
-    container_name: wingman_celery_ai
     hostname: worker_ai
     restart: unless-stopped
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          memory: 512m
+          cpus: '0.75'
     env_file:
       - .env
     environment:
@@ -106,15 +118,10 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
-    deploy:
-      resources:
-        limits:
-          memory: 512m
-          cpus: '0.75'
+
 
   celery_heavy:
     build: .
-    container_name: wingman_celery_heavy
     hostname: worker_heavy
     restart: unless-stopped
     env_file:
@@ -140,6 +147,7 @@ services:
       retries: 3
       start_period: 30s
     deploy:
+      replicas: 3
       resources:
         limits:
           memory: 512m
@@ -147,7 +155,6 @@ services:
 
   celery_beat:
     build: .
-    container_name: wingman_beat
     restart: unless-stopped
     env_file:
       - .env
@@ -173,7 +180,6 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: wingman_redis
     restart: unless-stopped
     command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --save 60 1 --loglevel warning
     volumes:

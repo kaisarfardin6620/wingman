@@ -38,8 +38,11 @@ SECURE_HSTS_PRELOAD = not DEBUG
 SESSION_COOKIE_HTTPONLY = True
 CSRF_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = 'Lax'
+SESSION_COOKIE_SAMESITE = 'Lax'
 CSRF_COOKIE_SAMESITE = 'Lax'
 SESSION_COOKIE_AGE = 1209600
+SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
+SESSION_CACHE_ALIAS = 'default'
 
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 OPENAI_MODEL_NAME = os.getenv('OPENAI_MODEL_NAME', 'gpt-4o')
@@ -123,8 +126,8 @@ if DATABASE_URL:
     DATABASES = {
         'default': dj_database_url.parse(DATABASE_URL)
     }
-    DATABASES['default']['CONN_MAX_AGE'] = int(os.getenv('DB_CONN_MAX_AGE', 0))
-    DATABASES['default']['CONN_HEALTH_CHECKS'] = False  
+    DATABASES['default']['CONN_MAX_AGE'] = int(os.getenv('DB_CONN_MAX_AGE', 300))
+    DATABASES['default']['CONN_HEALTH_CHECKS'] = True  
     DATABASES['default']['OPTIONS'] = {
         'connect_timeout': 10,
     }
