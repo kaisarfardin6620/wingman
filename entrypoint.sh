@@ -51,7 +51,7 @@ while ! nc -z $PGBOUNCER_HOST $PGBOUNCER_PORT; do
 done
 echo "PgBouncer ready at $PGBOUNCER_HOST:$PGBOUNCER_PORT"
 
-if echo "$@" | grep -q "gunicorn"; then
+if echo "$@" | grep -q "db-migrator"; then
     echo "Running migrations..."
     python manage.py migrate --noinput
 
@@ -59,6 +59,7 @@ if echo "$@" | grep -q "gunicorn"; then
     python manage.py collectstatic --noinput --clear
 
     echo "Django setup complete."
+    exit 0
 fi
 
 echo "Starting: $@"

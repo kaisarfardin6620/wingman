@@ -1,4 +1,5 @@
 from celery import shared_task
+from django.core.management import call_command
 from django.core.mail import send_mail
 from django.conf import settings
 import logging
@@ -34,3 +35,18 @@ def send_admin_reset_password_email_task(self, email, name, new_pass):
     except Exception as e:
         logger.error(f"Failed to send reset password email to {email}: {e}")
         raise self.retry(exc=e, countdown=10)
+
+@shared_task
+def flush_expired_tokens_task():
+    """
+    Task to flush expired outstanding tokens from the database.
+    This uses the 'flushexpiredtokens' command from 'rest_framework_simplejwt.token_blacklist'.
+    """
+    try:
+        logger.info("Starting flush_expired_tokens_task")
+        call_command('flushexpiredtokens')
+        logger.info("Successfully flushed expired tokens")
+        return "Expired tokens flushed successfully"
+    except Exception as e:
+        logger.error(f"Error flushing expired tokens: {e}")
+        return f"Error flushing expired tokens: {str(e)}"

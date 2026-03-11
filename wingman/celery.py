@@ -21,6 +21,10 @@ app.conf.beat_schedule = {
         'task': 'chat.tasks.check_reminders_task',
         'schedule': crontab(minute='*'),
     },
+    'flush-expired-tokens-daily': {
+        'task': 'authentication.tasks.flush_expired_tokens_task',
+        'schedule': crontab(minute=0, hour=0),
+    },
 }
 
 @app.task(bind=True)
