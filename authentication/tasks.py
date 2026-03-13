@@ -38,10 +38,6 @@ def send_admin_reset_password_email_task(self, email, name, new_pass):
 
 @shared_task
 def flush_expired_tokens_task():
-    """
-    Task to flush expired outstanding tokens from the database.
-    This uses the 'flushexpiredtokens' command from 'rest_framework_simplejwt.token_blacklist'.
-    """
     try:
         logger.info("Starting flush_expired_tokens_task")
         call_command('flushexpiredtokens')

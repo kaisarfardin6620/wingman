@@ -150,17 +150,20 @@ class ChatSessionImageUploadView(APIView):
         request={'multipart/form-data': MessageUploadSerializer},
         responses={201: MessageSerializer},
     )
-    def post(self, request, conversation_id):
-        try:
-            session = ChatSession.objects.get(
-                conversation_id=conversation_id,
-                user=request.user
-            )
-        except ChatSession.DoesNotExist:
-            return Response(
-                {"error": "Session not found or access denied"},
-                status=status.HTTP_404_NOT_FOUND
-            )
+    def post(self, request, conversation_id=None):
+        if conversation_id:
+            try:
+                session = ChatSession.objects.get(
+                    conversation_id=conversation_id,
+                    user=request.user
+                )
+            except ChatSession.DoesNotExist:
+                return Response(
+                    {"error": "Session not found or access denied"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        else:
+            session = ChatSession.objects.create(user=request.user, title="Image Analysis")
 
         data = request.data.copy()
         if hasattr(request, 'FILES'):
@@ -182,7 +185,13 @@ class ChatSessionImageUploadView(APIView):
         if error:
             return Response({"error": error}, status=status.HTTP_429_TOO_MANY_REQUESTS)
             
-        return Response({"message": "Files uploaded successfully", "data": response_data}, status=status.HTTP_201_CREATED)
+        response_data['conversation_id'] = session.conversation_id
+            
+        return Response({
+            "message": "Files uploaded successfully", 
+            "data": response_data,
+            "conversation_id": session.conversation_id
+        }, status=status.HTTP_201_CREATED)
 
 
 class ChatStatsView(APIView):

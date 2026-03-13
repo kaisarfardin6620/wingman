@@ -50,25 +50,28 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None, select
     client = OpenAI(api_key=settings.OPENAI_API_KEY)
     ai_msg = None
     session = None
-    
+    lock_acquired_by_task = False
     try:
         session = ChatSession.objects.select_related('user', 'target_profile').get(id=session_id)
-        
+        if analyze_screenshot:
+            lock_key = f"ai_processing_lock:{session.id}:{session.user.id}"
+            lock_acquired_by_task = cache.add(lock_key, "true", 35)
+            if not lock_acquired_by_task:
+                raise self.retry(countdown=6)
         ai_msg = Message.objects.filter(session=session, is_ai=True, processing_status='processing').last()
-        
+
         if not ai_msg:
             with transaction.atomic():
                 ai_msg = Message.objects.create(
-                    session=session, 
-                    is_ai=True, 
-                    text="", 
+                    session=session,
+                    is_ai=True,
+                    text="",
                     processing_status='processing'
                 )
-            
             send_ws_message(session.conversation_id, {
-                'id': ai_msg.id, 
-                'text': "", 
-                'is_ai': True, 
+                'id': ai_msg.id,
+                'text': "",
+                'is_ai': True,
                 'status': 'processing',
                 'created_at': str(ai_msg.created_at)
             })
@@ -94,7 +97,7 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None, select
                 max_tokens = 1000
         else:
             max_tokens = 1000
-        
+            
         response = client.chat.completions.create(
             model=settings.OPENAI_MODEL_NAME,
             messages=messages_payload,
@@ -103,7 +106,7 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None, select
             temperature=0.7,
             response_format={"type": "json_object"}
         )
-        
+
         ai_reply_json = response.choices[0].message.content
         tokens_used = response.usage.total_tokens if hasattr(response, 'usage') else 0
 
@@ -112,28 +115,27 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None, select
         except json.JSONDecodeError:
             parsed_reply = {"response_type": "text", "content": ai_reply_json}
             ai_reply_json = json.dumps(parsed_reply)
-        
+
         ai_msg.text = ai_reply_json
         ai_msg.tokens_used = tokens_used
         ai_msg.processing_status = 'completed'
         ai_msg.save()
-        
+
         User.objects.filter(pk=session.user.pk).update(tokens_used=models.F('tokens_used') + tokens_used)
         session.update_preview()
         cache.delete(f"chat_history:{session.conversation_id}:{session.user.id}")
-        
+
         send_ws_message(session.conversation_id, {
-            'id': ai_msg.id, 
-            'text': ai_msg.text, 
-            'is_ai': True, 
+            'id': ai_msg.id,
+            'text': ai_msg.text,
+            'is_ai': True,
             'status': 'completed',
             'created_at': str(ai_msg.created_at)
         })
-        
-        
+
         if any(word in user_text.lower() for word in ['tomorrow', 'tonight', 'meet', 'date', 'clock', 'pm', 'am', 'schedule', 'remind', 'talk', 'call', 'meeting', 'reminder']):
             intent_engine.delay(session.id, user_text)
-        
+
         if session.target_profile:
             profile_target_engine.delay(session.id, user_text)
 
@@ -142,7 +144,7 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None, select
     except ChatSession.DoesNotExist:
         logger.error(f"ChatSession {session_id} not found in generate_ai_response")
         return
-        
+
     except BadRequestError as e:
         logger.error(f"OpenAI Bad Request (Non-Retryable): {e}")
         if ai_msg:
@@ -150,11 +152,11 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None, select
             ai_msg.text = json.dumps({"response_type": "text", "content": "Error: Request too long or invalid."})
             ai_msg.save()
             send_ws_message(session.conversation_id, {'id': ai_msg.id, 'status': 'failed', 'text': ai_msg.text})
-    
+
     except (RateLimitError, APIConnectionError, InternalServerError) as e:
         logger.warning(f"OpenAI Network/Rate Error (Retrying): {e}")
         raise self.retry(exc=e)
-        
+
     except Exception as e:
         logger.error(f"AI System Error: {e}", exc_info=True)
         if ai_msg and session:
@@ -164,25 +166,41 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None, select
             send_ws_message(session.conversation_id, {'id': ai_msg.id, 'status': 'failed', 'text': ai_msg.text})
 
     finally:
-        if session and hasattr(session, 'id') and hasattr(session, 'user'):
+        if lock_acquired_by_task and session and hasattr(session, 'id') and hasattr(session, 'user'):
             cache.delete(f"ai_processing_lock:{session.id}:{session.user.id}")
+
 
 @shared_task(bind=True, max_retries=2, autoretry_for=(OpenAIError,))
 def analyze_screenshot_task(self, message_id):
     client = OpenAI(api_key=settings.OPENAI_API_KEY)
     try:
         message = Message.objects.select_related('session').prefetch_related('images').get(id=message_id)
-        if not message.images.exists(): 
+        if not message.images.exists():
             return
-            
+
         message.processing_status = 'processing'
         message.save(update_fields=['processing_status'])
         send_ws_message(message.session.conversation_id, {
             'id': message.id, 'status': 'processing', 'type': 'analysis_update'
         })
 
-        content =[
-            {"type": "text", "text": "Extract all visible text from these images and return it as JSON with key 'extracted_text'. Merge the text chronologically or logically."}
+        content = [
+            {
+                "type": "text",
+                "text": (
+                    "You are an expert, highly observant AI wingman and dating coach. "
+                    "Analyze these screenshots of a dating profile or social media account. "
+                    "You MUST look at BOTH the visual elements in the photos (style, body language, "
+                    "environment, hobbies) AND read all the text (bio, prompts, captions). "
+                    "Return a JSON object with the following keys: "
+                    "1. 'extracted_text': All visible text merged logically. "
+                    "2. 'the_read': A detailed breakdown of their personality, vibe, and archetype based on their pics and bio. "
+                    "3. 'what_they_want': What kind of partner/relationship they are signaling they want. "
+                    "4. 'the_blueprint': A strategic guide on how to approach them, what to highlight about yourself, and what they will respond well to. "
+                    "5. 'what_not_to_do': Mistakes to avoid or things that will give them the 'ick'. "
+                    "6. 'message_options': An array of 3 highly tailored, clever opening messages (e.g., Smooth, Playful, Lifestyle Match) based exactly on their profile."
+                )
+            }
         ]
 
         valid_images = 0
@@ -192,19 +210,19 @@ def analyze_screenshot_task(self, message_id):
                     with Image.open(image_file) as img:
                         if img.mode != 'RGB':
                             img = img.convert('RGB')
-                        
+
                         img.thumbnail((1024, 1024))
-                        
+
                         buffer = io.BytesIO()
                         img.save(buffer, format="JPEG", quality=85)
                         base64_image = base64.b64encode(buffer.getvalue()).decode('utf-8')
-                        
+
                         content.append({
-                            "type": "image_url", 
+                            "type": "image_url",
                             "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
                         })
                         valid_images += 1
-            except Exception as e: 
+            except Exception as e:
                 logger.error(f"Failed to read image {img_obj.id} for message {message_id}: {e}")
 
         if valid_images == 0:
@@ -218,34 +236,33 @@ def analyze_screenshot_task(self, message_id):
             max_tokens=1000,
             response_format={"type": "json_object"}
         )
-        
+
         try:
             ai_content = json.loads(response.choices[0].message.content)
             ocr_text = ai_content.get('extracted_text', '')
         except json.JSONDecodeError:
             ocr_text = ""
-        
+
         message.ocr_extracted_text = ocr_text
         message.processing_status = 'completed'
         message.save(update_fields=['ocr_extracted_text', 'processing_status'])
-        
+
         cache.delete(f"chat_history:{message.session.conversation_id}:{message.session.user.id}")
-        
+
         send_ws_message(message.session.conversation_id, {
-            'id': message.id, 
-            'type': 'analysis_complete', 
+            'id': message.id,
+            'type': 'analysis_complete',
             'ocr_text': ocr_text,
             'status': 'completed'
         })
 
-            
         generate_ai_response.delay(
-            message.session.id, 
-            message.text or "[Screenshot Uploaded]", 
+            message.session.id,
+            message.text or "[Screenshot Uploaded]",
             analyze_screenshot=True
         )
-        
-    except Exception as e: 
+
+    except Exception as e:
         logger.error(f"OCR Error for message {message_id}: {e}")
         try:
             message.processing_status = 'failed'
@@ -253,46 +270,47 @@ def analyze_screenshot_task(self, message_id):
             send_ws_message(message.session.conversation_id, {
                 'id': message.id, 'status': 'failed', 'type': 'analysis_failed'
             })
-        except Exception: 
+        except Exception:
             pass
+
 
 @shared_task(bind=True, max_retries=2, autoretry_for=(OpenAIError,))
 def transcribe_audio_task(self, message_id):
     client = OpenAI(api_key=settings.OPENAI_API_KEY)
     try:
         message = Message.objects.select_related('session').get(id=message_id)
-        if not message.audio: 
+        if not message.audio:
             return
-            
+
         message.processing_status = 'processing'
         message.save(update_fields=['processing_status'])
         send_ws_message(message.session.conversation_id, {
             'id': message.id, 'status': 'processing', 'type': 'transcription_update'
         })
-            
+
         with message.audio.open('rb') as audio_file:
             transcript = client.audio.transcriptions.create(
-                model="whisper-1", 
+                model="whisper-1",
                 file=(os.path.basename(message.audio.name), audio_file.read()),
                 response_format="text"
             )
-        
+
         message.text = transcript.strip()
         message.processing_status = 'completed'
         message.save(update_fields=['text', 'processing_status'])
-        
+
         cache.delete(f"chat_history:{message.session.conversation_id}:{message.session.user.id}")
-        
+
         send_ws_message(message.session.conversation_id, {
-            'id': message.id, 
-            'text': message.text, 
-            'is_ai': False, 
+            'id': message.id,
+            'text': message.text,
+            'is_ai': False,
             'type': 'transcription_complete',
             'status': 'completed'
         })
-        
+
         generate_ai_response.delay(message.session.id, message.text)
-        
+
     except Exception as e:
         logger.error(f"Transcription Error for message {message_id}: {e}")
         try:
@@ -301,8 +319,9 @@ def transcribe_audio_task(self, message_id):
             send_ws_message(message.session.conversation_id, {
                 'id': message.id, 'status': 'failed', 'type': 'transcription_failed'
             })
-        except Exception: 
+        except Exception:
             pass
+
 
 @shared_task(bind=True, max_retries=2, autoretry_for=(OpenAIError,))
 def profile_target_engine(self, session_id, latest_text):
@@ -312,23 +331,24 @@ def profile_target_engine(self, session_id, latest_text):
             session = ChatSession.objects.select_for_update().get(id=session_id)
             if not session.target_profile: return
             tp = TargetProfile.objects.select_for_update().get(id=session.target_profile.id)
-            
+
             prompt = (
                 f"Analyze text about {tp.name}: {latest_text}\n"
                 f"Extract new likes, preferences, mentions. Return JSON."
             )
             response = client.chat.completions.create(
-                model=settings.OPENAI_MODEL_MINI, 
-                messages=[{"role": "user", "content": prompt}], 
+                model=settings.OPENAI_MODEL_MINI,
+                messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"}
             )
-            
+
             try:
                 data = json.loads(response.choices[0].message.content)
             except json.JSONDecodeError:
                 data = {}
-            
+
             updated = False
+
             def add_if_new(source_list, new_items):
                 has_change = False
                 for item in new_items:
@@ -342,10 +362,9 @@ def profile_target_engine(self, session_id, latest_text):
             if data.get('new_mentions') and isinstance(data['new_mentions'], str):
                 if not tp.her_mentions: tp.her_mentions = data['new_mentions']; updated = True
                 elif data['new_mentions'] not in tp.her_mentions: tp.her_mentions += f" | {data['new_mentions']}"; updated = True
-                    
             if updated: tp.save()
-                
-    except Exception as e: 
+
+    except Exception as e:
         logger.error(f"Profile Engine Error: {e}")
 
 @shared_task(bind=True, max_retries=2, autoretry_for=(OpenAIError,))
@@ -356,15 +375,15 @@ def linguistic_engine(self, user_id, session_id):
         user_msgs = Message.objects.filter(sender_id=user_id, is_ai=False).only('text').order_by('-created_at')[:10]
         full_sample = "\n".join([m.text for m in user_msgs if m.text])
         if not full_sample: return
-        
+
         response = client.chat.completions.create(
-            model=settings.OPENAI_MODEL_MINI, 
-            messages=[{"role": "user", "content": f"Analyze style: {full_sample[:2000]}"}], 
+            model=settings.OPENAI_MODEL_MINI,
+            messages=[{"role": "user", "content": f"Analyze style: {full_sample[:2000]}"}],
             max_tokens=150
         )
         user_settings.linguistic_style = response.choices[0].message.content.strip()
         user_settings.save()
-    except Exception as e: 
+    except Exception as e:
         logger.error(f"Linguistic Engine Error: {e}")
 
 @shared_task(bind=True, max_retries=2, autoretry_for=(OpenAIError,))
@@ -380,35 +399,35 @@ def intent_engine(self, session_id, user_text):
             f"CRITICAL: Resolve relative times (like 'tomorrow' or 'in 5 minutes') based on the Current Date/Time and return as absolute ISO 8601 timestamp in 'start_time_iso'."
         )
         response = client.chat.completions.create(
-            model=settings.OPENAI_MODEL_MINI, 
-            messages=[{"role": "user", "content": prompt}], 
+            model=settings.OPENAI_MODEL_MINI,
+            messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"}
         )
-        
+
         try:
             data = json.loads(response.choices[0].message.content)
         except json.JSONDecodeError:
             data = {}
-        
+
         if data.get('is_event'):
             from dateutil import parser
             reminder_dt = None
             start_time_str = data.get('start_time_iso') or data.get('start_time')
-            
+
             if start_time_str:
                 try: reminder_dt = parser.parse(start_time_str)
                 except Exception: pass
 
             DetectedEvent.objects.create(
-                session=session, 
-                title=data.get('title', 'Event')[:255], 
-                description=data.get('description', '')[:500], 
+                session=session,
+                title=data.get('title', 'Event')[:255],
+                description=data.get('description', '')[:500],
                 start_time=start_time_str if start_time_str else str(timezone.now()),
                 has_conflict=data.get('has_conflict', False),
                 reminder_datetime=reminder_dt
             )
             send_push_notification(session.user, "Event Detected", f"Added '{data.get('title')}' to your plan.")
-    except Exception as e: 
+    except Exception as e:
         logger.error(f"Intent Engine Error: {e}")
 
 @shared_task(bind=True, max_retries=2, autoretry_for=(OpenAIError,))
@@ -416,13 +435,13 @@ def generate_chat_title(self, session_id, first_message):
     client = OpenAI(api_key=settings.OPENAI_API_KEY)
     try:
         response = client.chat.completions.create(
-            model=settings.OPENAI_MODEL_MINI, 
-            messages=[{"role": "system", "content": "Generate 3-5 word title."}, {"role": "user", "content": first_message[:200]}], 
+            model=settings.OPENAI_MODEL_MINI,
+            messages=[{"role": "system", "content": "Generate 3-5 word title."}, {"role": "user", "content": first_message[:200]}],
             max_tokens=20
         )
         title = response.choices[0].message.content.strip().replace('"', '')[:252]
         _update_session_title(session_id, title)
-    except Exception as e: 
+    except Exception as e:
         logger.error(f"Title Gen Error: {e}")
 
 def _update_session_title(session_id, title):
@@ -454,6 +473,5 @@ def check_reminders_task():
         reminder_datetime__lte=now + timedelta(minutes=15),
         reminder_sent=False, is_cancelled=False
     ).values_list('id', flat=True)
-    
     for eid in event_ids:
         send_reminder_push.delay(eid)
