@@ -188,6 +188,7 @@ REST_FRAMEWORK = {
         'otp': os.getenv('THROTTLE_OTP', '5/minute'),
         'chat': os.getenv('THROTTLE_CHAT', '60/minute'),
         'ai': os.getenv('THROTTLE_AI', '20/minute'),
+        'passcode': '5/minute',
     },
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': int(os.getenv('PAGE_SIZE', 20)),

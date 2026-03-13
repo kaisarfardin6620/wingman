@@ -17,14 +17,16 @@ def send_otp_via_email(email):
         otp_code = generate_otp()
         user = User.objects.get(email=email)
         
-        OneTimePassword.objects.update_or_create(
-            user=user,
-            defaults={
-                'otp': otp_code,
-                'created_at': timezone.now()
-            }
-        )
-        transaction.on_commit(lambda: send_otp_email_task.delay(email, otp_code))
+        with transaction.atomic():
+            OneTimePassword.objects.update_or_create(
+                user=user,
+                defaults={
+                    'otp': otp_code,
+                    'created_at': timezone.now()
+                }
+            )
+            transaction.on_commit(lambda: send_otp_email_task.delay(email, otp_code))
+            
         return True, "OTP sent successfully"
     except User.DoesNotExist:
         return True, "OTP sent successfully" 

@@ -130,19 +130,6 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None, select
             'created_at': str(ai_msg.created_at)
         })
         
-        try:
-            notification_body = parsed_reply.get('content', 'New message received')
-            if isinstance(notification_body, list):
-                notification_body = "Here are some suggestions for you."
-        except Exception:
-            notification_body = "New message received"
-
-        send_push_notification(
-            session.user, 
-            "AI Wingman Replied", 
-            str(notification_body)[:100] + "...", 
-            data={"conversation_id": str(session.conversation_id)}
-        )
         
         if any(word in user_text.lower() for word in ['tomorrow', 'tonight', 'meet', 'date', 'clock', 'pm', 'am', 'schedule', 'remind', 'talk', 'call', 'meeting', 'reminder']):
             intent_engine.delay(session.id, user_text)

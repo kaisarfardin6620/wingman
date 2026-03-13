@@ -28,6 +28,9 @@ logger = structlog.get_logger(__name__)
 class ConfigThrottle(UserRateThrottle):
     scope = 'anon'
 
+class PasscodeThrottle(UserRateThrottle):
+    scope = 'passcode'
+
 class ConfigDataView(APIView):
     permission_classes = [IsAuthenticated]
     throttle_classes = [ConfigThrottle]
@@ -109,6 +112,7 @@ class TargetProfileViewSet(viewsets.ModelViewSet):
 
 class VerifyPasscodeView(APIView):
     permission_classes = [IsAuthenticated]
+    throttle_classes = [PasscodeThrottle]
     
     @extend_schema(summary="Verify Passcode", request=PasscodeVerifySerializer, responses={200: dict})
     def post(self, request):
@@ -173,7 +177,7 @@ class ChangePasscodeView(APIView):
         return Response(serializer.errors, status=400)
 
 class FCMTokenView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes =[IsAuthenticated]
     
     @extend_schema(summary="Register FCM Token", request=dict, responses={200: dict})
     def post(self, request):
