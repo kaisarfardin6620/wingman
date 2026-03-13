@@ -30,3 +30,4 @@ profile_images
 serviceaccountkey.json
 .env.example
 target_profiles
+client_preference
