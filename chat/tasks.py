@@ -108,15 +108,22 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None, select
         )
 
         ai_reply_json = response.choices[0].message.content
+        
+        if not ai_reply_json:
+            refusal = getattr(response.choices[0].message, 'refusal', 'Content Blocked')
+            logger.warning(f"OpenAI returned empty content in AI response. Refusal: {refusal}")
+            ai_reply_json = '{"response_type": "text", "content": "I could not process that due to safety filters."}'
+
+        clean_reply = ai_reply_json.replace('```json', '').replace('```', '').strip()
         tokens_used = response.usage.total_tokens if hasattr(response, 'usage') else 0
 
         try:
-            parsed_reply = json.loads(ai_reply_json)
+            parsed_reply = json.loads(clean_reply)
         except json.JSONDecodeError:
-            parsed_reply = {"response_type": "text", "content": ai_reply_json}
-            ai_reply_json = json.dumps(parsed_reply)
+            parsed_reply = {"response_type": "text", "content": clean_reply}
+            clean_reply = json.dumps(parsed_reply)
 
-        ai_msg.text = ai_reply_json
+        ai_msg.text = clean_reply
         ai_msg.tokens_used = tokens_used
         ai_msg.processing_status = 'completed'
         ai_msg.save()
@@ -133,7 +140,7 @@ def generate_ai_response(self, session_id, user_text, selected_tone=None, select
             'created_at': str(ai_msg.created_at)
         })
 
-        if any(word in user_text.lower() for word in ['tomorrow', 'tonight', 'meet', 'date', 'clock', 'pm', 'am', 'schedule', 'remind', 'talk', 'call', 'meeting', 'reminder']):
+        if any(word in user_text.lower() for word in['tomorrow', 'tonight', 'meet', 'date', 'clock', 'pm', 'am', 'schedule', 'remind', 'talk', 'call', 'meeting', 'reminder']):
             intent_engine.delay(session.id, user_text)
 
         if session.target_profile:
@@ -184,21 +191,19 @@ def analyze_screenshot_task(self, message_id):
             'id': message.id, 'status': 'processing', 'type': 'analysis_update'
         })
 
-        content = [
+        content =[
             {
                 "type": "text",
                 "text": (
-                    "You are an expert, highly observant AI wingman and dating coach. "
-                    "Analyze these screenshots of a dating profile or social media account. "
-                    "You MUST look at BOTH the visual elements in the photos (style, body language, "
-                    "environment, hobbies) AND read all the text (bio, prompts, captions). "
+                    "You are an expert AI dating coach. Read all text in the provided screenshots "
+                    "(chat messages, bios, prompts) and analyze the general context. "
                     "Return a JSON object with the following keys: "
                     "1. 'extracted_text': All visible text merged logically. "
-                    "2. 'the_read': A detailed breakdown of their personality, vibe, and archetype based on their pics and bio. "
-                    "3. 'what_they_want': What kind of partner/relationship they are signaling they want. "
-                    "4. 'the_blueprint': A strategic guide on how to approach them, what to highlight about yourself, and what they will respond well to. "
-                    "5. 'what_not_to_do': Mistakes to avoid or things that will give them the 'ick'. "
-                    "6. 'message_options': An array of 3 highly tailored, clever opening messages (e.g., Smooth, Playful, Lifestyle Match) based exactly on their profile."
+                    "2. 'the_read': The overall tone and context of the conversation or profile. "
+                    "3. 'what_they_want': What kind of relationship/vibe they are signaling. "
+                    "4. 'the_blueprint': A strategic guide on how to approach them based on their text. "
+                    "5. 'what_not_to_do': Mistakes to avoid. "
+                    "6. 'message_options': An array of 3 highly tailored, clever opening messages or replies."
                 )
             }
         ]
@@ -237,23 +242,37 @@ def analyze_screenshot_task(self, message_id):
             response_format={"type": "json_object"}
         )
 
+        raw_content = response.choices[0].message.content
+        
+        if not raw_content:
+            refusal = getattr(response.choices[0].message, 'refusal', 'Content Blocked')
+            logger.warning(f"OpenAI returned empty content. Refusal: {refusal}")
+            raw_content = '{"extracted_text": "[Image blocked by AI safety filters]", "the_read": "Cannot analyze."}'
+
+        clean_content = raw_content.replace('```json', '').replace('```', '').strip()
+
         try:
-            ai_content = json.loads(response.choices[0].message.content)
+            ai_content = json.loads(clean_content)
             ocr_text = ai_content.get('extracted_text', '')
-        except json.JSONDecodeError:
-            ocr_text = ""
+            message.analysis_tags = ai_content
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON Parse Error: {e} | Raw: {raw_content}")
+            ocr_text = "Analysis completed, but failed to parse text."
 
         message.ocr_extracted_text = ocr_text
         message.processing_status = 'completed'
-        message.save(update_fields=['ocr_extracted_text', 'processing_status'])
+        message.save(update_fields=['ocr_extracted_text', 'processing_status', 'analysis_tags'])
 
         cache.delete(f"chat_history:{message.session.conversation_id}:{message.session.user.id}")
 
         send_ws_message(message.session.conversation_id, {
             'id': message.id,
+            'text': message.text,
+            'is_ai': False,
             'type': 'analysis_complete',
             'ocr_text': ocr_text,
-            'status': 'completed'
+            'status': 'completed',
+            'created_at': str(message.created_at)
         })
 
         generate_ai_response.delay(

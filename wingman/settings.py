@@ -29,7 +29,7 @@ SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = 'DENY'
 SECURE_SSL_REDIRECT = not DEBUG
-SECURE_REDIRECT_EXEMPT = [r'^health/$', r'^metrics/$']
+SECURE_REDIRECT_EXEMPT =[r'^health/$', r'^metrics/$']
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 SECURE_HSTS_SECONDS = 31536000 if not DEBUG else 0
@@ -37,7 +37,6 @@ SECURE_HSTS_INCLUDE_SUBDOMAINS = not DEBUG
 SECURE_HSTS_PRELOAD = not DEBUG
 SESSION_COOKIE_HTTPONLY = True
 CSRF_COOKIE_HTTPONLY = True
-SESSION_COOKIE_SAMESITE = 'Lax'
 SESSION_COOKIE_SAMESITE = 'Lax'
 CSRF_COOKIE_SAMESITE = 'Lax'
 SESSION_COOKIE_AGE = 1209600
@@ -251,7 +250,7 @@ CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [REDIS_CHANNELS_URL],
+            "hosts":[REDIS_CHANNELS_URL],
             "capacity": int(os.getenv('CHANNEL_CAPACITY', 1000)),
             "expiry": int(os.getenv('CHANNEL_EXPIRY', 60)),
         },
@@ -279,6 +278,18 @@ CELERY_TASK_ROUTES = {
     'chat.tasks.analyze_screenshot_task': {'queue': 'heavy_queue'},
     'chat.tasks.transcribe_audio_task': {'queue': 'heavy_queue'},
     '*': {'queue': 'default'},
+}
+
+from celery.schedules import crontab
+CELERY_BEAT_SCHEDULE = {
+    'check-event-reminders-every-minute': {
+        'task': 'chat.tasks.check_reminders_task',
+        'schedule': crontab(minute='*'),
+    },
+    'flush-expired-tokens-daily': {
+        'task': 'authentication.tasks.flush_expired_tokens_task',
+        'schedule': crontab(hour=0, minute=0),
+    },
 }
 
 CACHES = {
@@ -393,7 +404,7 @@ LOGGING = {
     },
     "loggers": {
         "django": {
-            "handlers": ["console", "file"],
+            "handlers":["console", "file"],
             "level": os.getenv('DJANGO_LOG_LEVEL', 'INFO'),
             "propagate": True,
         },
@@ -404,7 +415,7 @@ LOGGING = {
         },
         "authentication": {"handlers": ["console", "file"], "level": "INFO", "propagate": False},
         "chat": {"handlers": ["console", "file"], "level": "INFO", "propagate": False},
-        "core": {"handlers": ["console", "file"], "level": "INFO", "propagate": False},
+        "core": {"handlers":["console", "file"], "level": "INFO", "propagate": False},
         "dashboard": {"handlers":["console", "file"], "level": "INFO", "propagate": False},
     },
 }
@@ -430,6 +441,11 @@ if not DEBUG:
 WS_USER_CACHE_TIMEOUT = int(os.getenv('WS_USER_CACHE_TIMEOUT', 300))
 
 USE_AWS = os.getenv('USE_AWS', 'False').strip().lower() == 'true'
+
+STATIC_URL = '/static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 if USE_AWS:
     AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
@@ -459,11 +475,6 @@ if USE_AWS:
     MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/media/'
 
 else:
-    STATIC_URL = '/static/'
-    STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
-    MEDIA_URL = '/media/'
-    MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
-
     STORAGES = {
         "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
         "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},

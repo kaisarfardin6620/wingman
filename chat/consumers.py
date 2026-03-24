@@ -4,6 +4,7 @@ from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction, models
 from core.models import TargetProfile, GlobalConfig
@@ -208,11 +209,18 @@ class ChatConsumer(AsyncWebsocketConsumer):
         
         history_data =[]
         for msg in messages:
+            images_data =[]
+            for img in msg.images.all():
+                url = img.image.url
+                if not url.startswith('http'):
+                    url = f"{settings.SERVER_BASE_URL}{url}"
+                images_data.append({"id": img.id, "image_url": url})
+                
             history_data.append({
                 'id': msg.id,
                 'text': msg.text,
                 'is_ai': msg.is_ai,
-                'images':[{"id": img.id, "image_url": img.image.url} for img in msg.images.all()],
+                'images': images_data,
                 'ocr_text': msg.ocr_extracted_text,
                 'status': msg.processing_status,
                 'created_at': str(msg.created_at)
@@ -270,8 +278,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
             processing_status='completed'
         )
         session.update_preview()
-        self.user.msg_count += 1
+        
         User.objects.filter(pk=self.user.pk).update(msg_count=models.F('msg_count') + 1)
+        self.user.refresh_from_db(fields=['msg_count'])
         new_count = self.user.msg_count
 
         transaction.on_commit(lambda: generate_ai_response.delay(session.id, text, selected_tone, selected_length))
