@@ -92,7 +92,7 @@
 ---
 
 ## Infrastructure & DevOps
-- **Docker** — containerisation of all services with multi-stage Python images
+- **Docker** — containerization of all services with multi-stage Python images
 - **Docker Compose** — multi-container orchestration (web, Celery workers, Redis, Nginx, PgBouncer)
 - **Nginx** — reverse proxy and static file serving
 - **Celery** — distributed task queue; `worker`, `beat`, `threads` and `prefork` pool configurations
@@ -102,7 +102,7 @@
 - **Structlog** — structured, context-aware application logging
 - **Sentry SDK** — error monitoring and performance tracing
 - **django-prometheus** — Prometheus metrics exposure for Django applications
-- **TensorBoard** — training visualisation and model debugging
+- **TensorBoard** — training visualization and model debugging
 
 ---
 
