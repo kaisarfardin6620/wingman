@@ -113,7 +113,7 @@ def build_experience(t):
     if not t.EXPERIENCE:
         return ""
 
-    # Check if experience is a placeholder (all fields contain [FILL)
+    # Check if experience is a placeholder (all fields contain [FILL:])
     all_placeholder = all(
         "[FILL" in (e.get("title", "") + e.get("company", ""))
         for e in t.EXPERIENCE
