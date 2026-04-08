@@ -15,7 +15,7 @@ Results-driven AI Systems Engineer specialising in production-grade AI backends,
 
 ## Technical Skills
 
-### Languages
+### Programming Languages
 - Python, SQL
 
 ### AI / Machine Learning

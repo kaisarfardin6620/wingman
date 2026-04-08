@@ -20,7 +20,7 @@ This folder contains everything you need to build and customise your professiona
 Open `RESUME_DRAFT.md`. This is your complete resume draft with all projects and skills extracted from your actual GitHub code.
 
 ### Step 2 — Fill in Missing Details
-Search for `[placeholder]` text and fill in:
+Search for `_... — To be added_` placeholders and fill in:
 - University name(s) and graduation year(s)
 - Any internship or work experience
 - Location / phone number
